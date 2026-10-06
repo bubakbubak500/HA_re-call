@@ -308,6 +308,7 @@ def _request(method: str, path: str, path_params: dict, user: data.User,
             "headers": [
                 (b"x-user-id", user.external_id.encode()),
                 (b"x-user-upn", user.upn.encode()),
+                (b"x-bff-secret", config.BFF_SHARED_SECRET.encode()),
                 (b"content-type", b"application/json"),
             ],
         },

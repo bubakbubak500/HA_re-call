@@ -336,7 +336,12 @@ def _request(q: str, headers: dict | None = None) -> Request:
     })
 
 
-_CALLER = {"x-user-id": "ba_me", "x-user-upn": "me@example.com", "x-user-name": "Me"}
+_CALLER = {
+    "x-user-id": "ba_me",
+    "x-user-upn": "me@example.com",
+    "x-user-name": "Me",
+    "x-bff-secret": "test-bff-secret",  # set in conftest
+}
 
 
 async def test_users_search_requires_identity(monkeypatch):

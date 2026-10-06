@@ -46,6 +46,10 @@ os.environ["DATABASE_URL"] = TEST_DB_URL
 # Forced, not defaulted: the compose .env may run the stack in entra or
 # betterauth mode, and tests that need another mode monkeypatch config.
 os.environ["AUTH_MODE"] = "dev"
+# A known BFF secret, so REST-route tests that build requests by hand can send it
+# and pass `resolve_identity` in whichever mode they monkeypatch. Set in the
+# environment (not on config) so it survives tests that reload config.
+os.environ["BFF_SHARED_SECRET"] = "test-bff-secret"
 
 import asyncio  # noqa: E402
 import uuid  # noqa: E402

@@ -3,8 +3,9 @@
 Paths:
 - REST API (from the web BFF): the BFF validates the web session (MSAL in
   entra mode, Better Auth in betterauth mode) and forwards X-User-* headers
-  over the trusted internal network. `resolve_identity` reads them (falling
-  back to the dev stub user when AUTH_MODE=dev).
+  plus the X-BFF-Secret shared secret. `resolve_identity` trusts the identity
+  headers only when that secret matches (falling back to the dev stub user
+  when AUTH_MODE=dev).
 - MCP (from AI assistants): FastMCP's `AzureProvider` (see `build_mcp_auth`)
   runs the browser OAuth flow against Entra and validates the returned JWT.
   `mcp_identity` reads the validated token's claims (falling back to the dev
@@ -23,6 +24,7 @@ Paths:
 """
 from __future__ import annotations
 
+import hmac
 import logging
 import time
 from datetime import datetime
@@ -58,6 +60,16 @@ def resolve_identity(request: Request) -> Optional[dict]:
             "upn": upn or config.DEV_USER["upn"],
             "name": name or config.DEV_USER["name"],
         }
+
+    # The backend is reachable without going through the BFF (its MCP host is
+    # public), so the X-User-* headers are only as trustworthy as the caller.
+    # Require the shared secret (constant-time compare); unset → fail closed.
+    if not config.BFF_SHARED_SECRET:
+        log.error("BFF_SHARED_SECRET is not set; rejecting REST call")
+        return None
+    secret = request.headers.get("x-bff-secret") or ""
+    if not hmac.compare_digest(secret.encode(), config.BFF_SHARED_SECRET.encode()):
+        return None
 
     if not oid or not upn:
         return None

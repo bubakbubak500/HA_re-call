@@ -108,7 +108,9 @@ docker compose up -d      # postgres + backend + worker + web
 Local dev defaults to `AUTH_MODE=dev` (stub user, open MCP), so nothing external is
 required to start. To exercise real SSO, MCP OAuth, and embeddings, set `AUTH_MODE=entra`
 and fill in the Entra and Azure OpenAI values in `.env`, or use `AUTH_MODE=betterauth`
-(below). For embeddings without Azure, see [Embeddings](#embeddings).
+(below). Both modes also need `BFF_SHARED_SECRET` (`openssl rand -hex 32`): the backend
+trusts the web app's identity headers only alongside it. For embeddings without Azure,
+see [Embeddings](#embeddings).
 
 ### Auth modes
 
@@ -144,6 +146,9 @@ Auth on the web host to register and sign in.
      verbatim as the issuer, and the backend advertises it byte for byte.
    - `BETTER_AUTH_SECRET`: `openssl rand -base64 32`. The web app refuses to start on
      an `https` origin with this empty or left at the dev placeholder.
+   - `BFF_SHARED_SECRET`: `openssl rand -hex 32`, the same value for the web app and
+     the backend. The backend trusts the web app's identity headers only with it, and
+     refuses every REST call while it is unset.
    - `BETTER_AUTH_INTERNAL_URL`: where the backend reaches the web app to validate
      tokens (`http://web:3000` in compose; defaults to `BETTER_AUTH_URL`).
    - `MCP_PUBLIC_URL`: the MCP host, and add that host to `MCP_ALLOWED_HOSTS`.

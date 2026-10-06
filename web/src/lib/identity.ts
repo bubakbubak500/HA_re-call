@@ -22,10 +22,14 @@ export async function resolveIdentity(
   return { id: user.oid, upn: user.upn, name: user.name };
 }
 
+// X-BFF-Secret proves to the backend that the identity headers came from us:
+// outside dev mode it rejects X-User-* without it.
 export function identityHeaders(user: Identity): Headers {
   const headers = new Headers();
   headers.set("x-user-id", user.id);
   headers.set("x-user-upn", user.upn);
   headers.set("x-user-name", user.name);
+  const secret = process.env.BFF_SHARED_SECRET;
+  if (secret) headers.set("x-bff-secret", secret);
   return headers;
 }

@@ -10,8 +10,9 @@
 # misreads a `:?message` that contains a hyphen as a variable name.
 #
 # Required: POSTGRES_PASSWORD (URL-safe, e.g. openssl rand -hex 24),
-# MCP_PUBLIC_URL (e.g. https://recall-mcp.example.com) and MCP_ALLOWED_HOSTS
-# (e.g. recall-mcp.example.com,backend,backend:*).
+# MCP_PUBLIC_URL (e.g. https://recall-mcp.example.com), MCP_ALLOWED_HOSTS
+# (e.g. recall-mcp.example.com,backend,backend:*) and BFF_SHARED_SECRET
+# (e.g. openssl rand -hex 32).
 
 name: recall
 
@@ -47,6 +48,9 @@ services:
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:?}
       # The public MCP host plus the in-network name the web BFF uses.
       MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:?}
+      # Shared with the web service: the REST API trusts the BFF's identity
+      # headers only alongside it (the MCP host is public).
+      BFF_SHARED_SECRET: ${BFF_SHARED_SECRET:?}
       BETTER_AUTH_URL: ${BETTER_AUTH_URL:-}
       BETTER_AUTH_INTERNAL_URL: http://web:3000
       # Same access list as the web service: MCP tokens of users no longer on
@@ -119,6 +123,8 @@ services:
     environment:
       AUTH_MODE: ${AUTH_MODE:-betterauth}
       BACKEND_URL: http://backend:8765
+      # Sent with every proxied REST call; same value as the backend's.
+      BFF_SHARED_SECRET: ${BFF_SHARED_SECRET:?}
       # Better Auth owns its ba_* tables in the same database and creates them
       # at startup.
       DATABASE_URL: postgresql://${POSTGRES_USER:-recall}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-recall}

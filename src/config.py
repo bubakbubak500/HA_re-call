@@ -36,6 +36,14 @@ MCP_ALLOWED_HOSTS = [
 #                server that validates its opaque access tokens (see auth.py)
 AUTH_MODE = os.environ.get("AUTH_MODE", "dev").lower()
 
+# Shared secret the web BFF sends (X-BFF-Secret) with every proxied REST call.
+# The REST API trusts the BFF's X-User-* identity headers, so outside dev mode
+# it accepts them ONLY alongside this secret — otherwise anyone who can reach
+# the backend (its MCP host is public) could claim any identity. Fails closed:
+# unset outside dev mode → every REST call is 401. Set the same value on the web
+# app.
+BFF_SHARED_SECRET = os.environ.get("BFF_SHARED_SECRET", "")
+
 DEV_USER = {
     "oid": os.environ.get("DEV_USER_OID", "00000000-0000-0000-0000-000000000001"),
     "upn": os.environ.get("DEV_USER_UPN", "dev@example.com"),

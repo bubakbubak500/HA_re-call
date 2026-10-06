@@ -147,6 +147,13 @@ if SESSION_SECRET="$(az keyvault secret show --vault-name "$KV_NAME" -n session-
 else
   SESSION_SECRET="$(openssl rand -base64 32)"
 fi
+# Same for the BFF↔backend shared secret (rotating it is safe but needs both
+# apps to pick up the new value, so don't churn it on every run).
+if BFF_SECRET="$(az keyvault secret show --vault-name "$KV_NAME" -n bff-shared-secret --query value -o tsv 2>/dev/null)"; then
+  echo ">> reusing existing bff-shared-secret"
+else
+  BFF_SECRET="$(openssl rand -base64 32)"
+fi
 
 # ── 4. Postgres Flexible Server (Burstable B1ms) + pgvector ───────────────────
 echo ">> [4/9] Postgres Flexible Server"
@@ -175,6 +182,7 @@ retry az keyvault secret set --vault-name "$KV_NAME" -n session-secret      --va
 retry az keyvault secret set --vault-name "$KV_NAME" -n azure-client-secret --value "$AZURE_CLIENT_SECRET"  -o none
 retry az keyvault secret set --vault-name "$KV_NAME" -n azure-openai-key    --value "$AZURE_OPENAI_API_KEY" -o none
 retry az keyvault secret set --vault-name "$KV_NAME" -n pg-admin-password   --value "$PG_PASSWORD"          -o none
+retry az keyvault secret set --vault-name "$KV_NAME" -n bff-shared-secret   --value "$BFF_SECRET"           -o none
 
 # Versionless secret URIs for Container Apps Key Vault references.
 kv_uri() { retry az keyvault secret show --vault-name "$KV_NAME" -n "$1" --query id -o tsv | sed 's|/[^/]*$||'; }
@@ -182,6 +190,7 @@ DB_URI="$(kv_uri database-url)"
 SESSION_URI="$(kv_uri session-secret)"
 CLIENT_URI="$(kv_uri azure-client-secret)"
 AOAI_URI="$(kv_uri azure-openai-key)"
+BFF_URI="$(kv_uri bff-shared-secret)"
 
 # ── 5. Build & push images (cloud build — no local Docker needed) ─────────────
 echo ">> [5/9] Building images in ACR"
@@ -230,11 +239,16 @@ exists az containerapp show -g "$RG" -n "$APP_MCP" \
                   "AZURE_OPENAI_EMBEDDING_MODEL=${AOAI_MODEL}" \
                   "AZURE_OPENAI_EMBEDDING_DIM=${AOAI_DIM}" -o none
 MCP_FQDN="$(retry az containerapp show -g "$RG" -n "$APP_MCP" --query properties.configuration.ingress.fqdn -o tsv)"
+# Set unconditionally (the create above is skipped for an existing app): the
+# REST API only trusts X-User-* headers that come with this secret.
+retry az containerapp secret set -g "$RG" -n "$APP_MCP" \
+  --secrets "bff-secret=keyvaultref:${BFF_URI},identityref:${IDENTITY_ID}" -o none
 # Now that we know the public host, add it to the DNS-rebinding allowlist.
 retry az containerapp update -g "$RG" -n "$APP_MCP" \
   --image "$BACKEND_IMG" \
   --set-env-vars "MCP_ALLOWED_HOSTS=${MCP_FQDN},${MCP_FQDN}:*,localhost:*,127.0.0.1:*" \
-                 "MCP_PUBLIC_URL=https://${MCP_FQDN}" -o none
+                 "MCP_PUBLIC_URL=https://${MCP_FQDN}" \
+                 "BFF_SHARED_SECRET=secretref:bff-secret" -o none
 
 # ── 8. Worker (no ingress) ────────────────────────────────────────────────────
 echo ">> [8/9] $APP_WORKER"
@@ -278,11 +292,14 @@ exists az containerapp show -g "$RG" -n "$APP_WEB" \
                   "AZURE_CLIENT_SECRET=secretref:client-secret" \
                   "SESSION_SECRET=secretref:session-secret" -o none
 WEB_FQDN="$(retry az containerapp show -g "$RG" -n "$APP_WEB" --query properties.configuration.ingress.fqdn -o tsv)"
+retry az containerapp secret set -g "$RG" -n "$APP_WEB" \
+  --secrets "bff-secret=keyvaultref:${BFF_URI},identityref:${IDENTITY_ID}" -o none
 # Wire the real callback URL now that the web host exists.
 retry az containerapp update -g "$RG" -n "$APP_WEB" \
   --image "$WEB_IMG" \
   --set-env-vars "AUTH_REDIRECT_URI=https://${WEB_FQDN}/api/auth/callback" \
-                 "AUTH_POST_LOGOUT_REDIRECT_URI=https://${WEB_FQDN}" -o none
+                 "AUTH_POST_LOGOUT_REDIRECT_URI=https://${WEB_FQDN}" \
+                 "BFF_SHARED_SECRET=secretref:bff-secret" -o none
 # The MCP backend returns shareable note/workspace links on the web host.
 retry az containerapp update -g "$RG" -n "$APP_MCP" \
   --image "$BACKEND_IMG" \

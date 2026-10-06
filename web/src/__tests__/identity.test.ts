@@ -88,4 +88,19 @@ describe("resolveIdentity", () => {
     expect(h.get("x-user-upn")).toBe("a@b.c");
     expect(h.get("x-user-name")).toBe("A");
   });
+
+  it("identityHeaders sends the BFF shared secret only when configured", async () => {
+    const { identityHeaders } = await withMode("dev", () => import("@/lib/identity"));
+    const user = { id: "u1", upn: "a@b.c", name: "A" };
+    const prev = process.env.BFF_SHARED_SECRET;
+    try {
+      delete process.env.BFF_SHARED_SECRET;
+      expect(identityHeaders(user).has("x-bff-secret")).toBe(false);
+      process.env.BFF_SHARED_SECRET = "s3cret";
+      expect(identityHeaders(user).get("x-bff-secret")).toBe("s3cret");
+    } finally {
+      if (prev === undefined) delete process.env.BFF_SHARED_SECRET;
+      else process.env.BFF_SHARED_SECRET = prev;
+    }
+  });
 });
