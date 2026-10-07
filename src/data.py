@@ -9,6 +9,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
+from typing import TYPE_CHECKING
 
 from . import config
 from . import guide as guide_rules
@@ -31,6 +32,9 @@ from .markdown import (
 )
 from .state import get_pool
 from .tasks import enqueue_embed
+
+if TYPE_CHECKING:
+    from .importer import ImportTree
 
 
 def _via() -> str | None:
@@ -1146,26 +1150,92 @@ async def _resolve_incoming(conn, project_id: str, note_id, title: str) -> None:
     )
 
 
+async def _insert_note(
+    conn, project_id: str, folder_id: str | None, title: str, body: str, user_id: str
+):
+    """Insert one note inside the caller's transaction: unique slug, metadata
+    from frontmatter, outgoing links, and any earlier links waiting for this
+    title. Returns the row; the caller enqueues embedding after commit."""
+    proj = project_metadata(parse_frontmatter(body)[0])
+    slug = await _unique_slug(conn, project_id, slugify(title))
+    row = await conn.fetchrow(
+        "INSERT INTO notes "
+        "(project_id, folder_id, title, slug, body, type, tags, status, metadata, created_by, updated_by, created_via, updated_via) "
+        "VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::uuid,$10::uuid,$11,$11) RETURNING *",
+        project_id, folder_id, title, slug, body, proj["type"], proj["tags"],
+        proj["status"], json.dumps(proj["metadata"]), user_id, _via(),
+    )
+    await _sync_links(conn, row["id"], project_id, extract_wikilinks(body))
+    await _resolve_incoming(conn, project_id, row["id"], title)
+    return row
+
+
 async def create_note(
     project_id: str, title: str, body: str, user_id: str, folder_id: str | None = None
 ) -> Note:
-    proj = project_metadata(parse_frontmatter(body)[0])
     pool = await get_pool()
     async with pool.acquire() as conn:
         async with conn.transaction():
-            slug = await _unique_slug(conn, project_id, slugify(title))
-            row = await conn.fetchrow(
-                "INSERT INTO notes "
-                "(project_id, folder_id, title, slug, body, type, tags, status, metadata, created_by, updated_by, created_via, updated_via) "
-                "VALUES ($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::uuid,$10::uuid,$11,$11) RETURNING *",
-                project_id, folder_id, title, slug, body, proj["type"], proj["tags"],
-                proj["status"], json.dumps(proj["metadata"]), user_id, _via(),
-            )
-            await _sync_links(conn, row["id"], project_id, extract_wikilinks(body))
-            await _resolve_incoming(conn, project_id, row["id"], title)
+            row = await _insert_note(conn, project_id, folder_id, title, body, user_id)
     note = _note(row)
     await enqueue_embed(note.id)  # index for semantic search (after commit)
     return note
+
+
+async def import_tree(
+    project_id: str,
+    parent_id: str | None,
+    root_name: str | None,
+    tree: ImportTree,
+    user_id: str,
+) -> dict | None:
+    """Create an uploaded folder tree (see importer.py) under parent_id (NULL =
+    the project root), all in one transaction. With root_name, everything goes
+    inside a new folder of that name; without, straight into the target.
+
+    Links are order-independent: each note links to the notes already inserted
+    and claims the links earlier notes left unresolved for its title — so
+    `[[wikilinks]]` between imported notes resolve whatever the file order.
+    Returns None if parent_id isn't a live folder of project_id."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            if parent_id is not None:
+                ok = await conn.fetchval(
+                    "SELECT 1 FROM folders WHERE id = $1::uuid AND project_id = $2::uuid "
+                    "AND archived_at IS NULL",
+                    parent_id, project_id,
+                )
+                if not ok:
+                    return None
+
+            async def new_folder(parent: str | None, name: str) -> str:
+                return str(await conn.fetchval(
+                    "INSERT INTO folders (project_id, parent_id, name, created_by) "
+                    "VALUES ($1::uuid, $2::uuid, $3, $4::uuid) RETURNING id",
+                    project_id, parent, name, user_id,
+                ))
+
+            root_id = await new_folder(parent_id, root_name) if root_name else None
+            # Folder path (below the import root) → id; parents before children.
+            ids: dict[tuple[str, ...], str | None] = {(): root_id or parent_id}
+            for path in sorted(tree.folders, key=len):
+                ids[path] = await new_folder(ids[path[:-1]], path[-1])
+            note_ids = [
+                str((await _insert_note(
+                    conn, project_id, ids[n.folder], n.title, n.body, user_id
+                ))["id"])
+                for n in tree.notes
+            ]
+    for nid in note_ids:  # index for semantic search (after commit)
+        await enqueue_embed(nid)
+    return {
+        "folder_id": root_id,
+        "folders": len(tree.folders) + (1 if root_id else 0),
+        "notes": len(note_ids),
+        "skipped": tree.skipped,
+        "first_note_id": note_ids[0] if note_ids else None,
+    }
 
 
 def _dumps_metadata(md) -> str:

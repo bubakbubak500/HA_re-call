@@ -21,7 +21,9 @@ async function proxy(req: NextRequest, path: string[]) {
 
   const init: RequestInit = { method: req.method, headers, cache: "no-store" };
   if (req.method !== "GET" && req.method !== "HEAD") {
-    init.body = await req.text();
+    // Raw bytes, not text: a .zip import upload would be corrupted by a UTF-8
+    // round trip. JSON bodies pass through unchanged either way.
+    init.body = await req.arrayBuffer();
   }
 
   try {

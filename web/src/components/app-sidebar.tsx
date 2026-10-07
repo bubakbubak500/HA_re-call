@@ -12,6 +12,7 @@ import {
   Files,
   FolderOpen,
   FolderPlus,
+  FolderUp,
   Globe,
   Link as LinkIcon,
   LogOut,
@@ -92,6 +93,19 @@ import {
   projectZipPath,
 } from "@/lib/export-markdown";
 import { importMarkdownFiles, partitionFiles } from "@/lib/import-markdown";
+import {
+  type DropPlan,
+  type ImportResult,
+  importSummary,
+  importTree,
+  isEmptyPlan,
+  isZip,
+  itemsFromPicked,
+  planDrop,
+  type TreeItem,
+  walkDirectory,
+  zipBaseName,
+} from "@/lib/import-tree";
 import { useRevalidate } from "@/lib/revalidate";
 import { useCopyLink } from "@/lib/use-copy-link";
 import { type OrgWorkspacesMode, readPreferences } from "@/lib/use-preferences";
@@ -205,6 +219,9 @@ const isFileDrag = (dt: DataTransfer) => dt.types.includes("Files");
 // falls back to 1 if the item list is momentarily empty.
 const fileCount = (dt: DataTransfer) =>
   Array.from(dt.items).filter((i) => i.kind === "file").length || 1;
+// dropTarget while an OS file drag hovers the sidebar outside any workspace:
+// dropping there imports folders/zips as new workspaces.
+const NEW_WORKSPACE = "__new_workspace__";
 
 // 1×1 transparent GIF — replaces the browser's default drag image so our own
 // tooltip is the only thing following the cursor.
@@ -454,9 +471,10 @@ export function AppSidebar({ authMode }: { authMode: string }) {
   // so pointer movement never re-renders the tree.
   const ghostRef = useRef<HTMLDivElement | null>(null);
   const dragImgRef = useRef<HTMLImageElement | null>(null);
-  // Hidden file input for the "Import markdown…" menu action, plus the target
-  // (project/folder) the pending pick should import into.
+  // Hidden file inputs for the "Import files…" / "Import folder…" menu actions,
+  // plus the target (project/folder) the pending pick should import into.
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const importTarget = useRef<{ projectId: string; folderId: string | null }>({
     projectId: "",
     folderId: null,
@@ -999,17 +1017,109 @@ export function AppSidebar({ authMode }: { authMode: string }) {
     }
   }
 
+  // Folder-tree import (lib/import-tree): each dropped folder or .zip becomes a
+  // folder of the same name under the target, with its subfolders and notes;
+  // loose markdown files take the flat import above. One toast for the lot.
+  async function importDrop(plan: DropPlan, projectId: string, folderId: string | null) {
+    const results: ImportResult[] = [];
+    try {
+      for (const dir of plan.dirs) {
+        const items = await walkDirectory(dir);
+        results.push(await importTree(projectId, { folderId, name: dir.name }, items));
+      }
+      for (const zip of plan.zips) {
+        results.push(
+          await importTree(projectId, { folderId, name: zipBaseName(zip.name) }, zip),
+        );
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), "error");
+    }
+    if (results.length > 0) {
+      expand(projectId);
+      if (folderId) expand(folderId);
+      for (const r of results) if (r.folder_id) expand(r.folder_id);
+      loadTree(projectId);
+      toast(importSummary(results));
+    }
+    if (plan.files.length > 0) await importFiles(plan.files, projectId, folderId);
+  }
+
+  // Dropped on the sidebar outside any workspace: each folder or .zip becomes
+  // a new workspace of that name, its contents at the workspace root.
+  async function importAsWorkspaces(plan: DropPlan) {
+    if (plan.files.length > 0 && plan.dirs.length + plan.zips.length === 0) {
+      toast("Drop markdown files on a workspace or folder — or drop a folder or .zip here to create a workspace.");
+      return;
+    }
+    const sources: { name: string; load: () => Promise<File | TreeItem[]> }[] = [
+      ...plan.dirs.map((d) => ({ name: d.name, load: () => walkDirectory(d) })),
+      ...plan.zips.map((z) => ({ name: zipBaseName(z.name), load: async () => z })),
+    ];
+    const results: ImportResult[] = [];
+    for (const src of sources) {
+      let created: Project | null = null;
+      try {
+        const payload = await src.load();
+        created = await createProject(src.name);
+        results.push(await importTree(created.id, { folderId: null, name: null }, payload));
+        const p = created;
+        setState((s) =>
+          s.kind === "ready"
+            ? { kind: "ready", me: { ...s.me, projects: [...s.me.projects, p] } }
+            : s,
+        );
+        expand(p.id);
+        loadTree(p.id);
+      } catch (e) {
+        // Don't leave an empty workspace behind for a failed import.
+        if (created) await deleteProject(created.id).catch(() => undefined);
+        toast(e instanceof Error ? e.message : String(e), "error");
+      }
+    }
+    if (results.length > 0) toast(importSummary(results));
+  }
+
   // Menu path: remember the target, then open the OS file picker.
   function startImport(projectId: string, folderId: string | null) {
     importTarget.current = { projectId, folderId };
     fileInputRef.current?.click();
   }
 
+  function startFolderImport(projectId: string, folderId: string | null) {
+    importTarget.current = { projectId, folderId };
+    folderInputRef.current?.click();
+  }
+
   function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ""; // allow re-picking the same file later
     const { projectId, folderId } = importTarget.current;
-    if (projectId) void importFiles(files, projectId, folderId);
+    if (!projectId) return;
+    const zips = files.filter(isZip);
+    void importDrop(
+      { dirs: [], zips, files: files.filter((f) => !isZip(f)) },
+      projectId,
+      folderId,
+    );
+  }
+
+  async function onFolderPicked(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    const { projectId, folderId } = importTarget.current;
+    if (!projectId || files.length === 0) return;
+    try {
+      const { root, items } = await itemsFromPicked(files);
+      const result = await importTree(projectId, { folderId, name: root }, items);
+      expand(projectId);
+      if (folderId) expand(folderId);
+      if (result.folder_id) expand(result.folder_id);
+      loadTree(projectId);
+      toast(importSummary([result]));
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "error");
+    }
   }
 
   function startNewFolder(projectId: string, parentId: string | null) {
@@ -1224,7 +1334,8 @@ export function AppSidebar({ authMode }: { authMode: string }) {
       items.push({ divider: true });
       items.push({ label: "New note", icon: <FilePlus size={15} />, onSelect: () => newNote(p.id, null) });
       items.push({ label: "New folder", icon: <FolderPlus size={15} />, onSelect: () => startNewFolder(p.id, null) });
-      items.push({ label: "Import markdown…", icon: <Upload size={15} />, onSelect: () => startImport(p.id, null) });
+      items.push({ label: "Import files or .zip…", icon: <Upload size={15} />, onSelect: () => startImport(p.id, null) });
+      items.push({ label: "Import folder…", icon: <FolderUp size={15} />, onSelect: () => startFolderImport(p.id, null) });
     }
     if (p.role === "owner") {
       items.push({ divider: true });
@@ -1311,7 +1422,8 @@ export function AppSidebar({ authMode }: { authMode: string }) {
       { divider: true },
       { label: "New note", icon: <FilePlus size={15} />, onSelect: () => newNote(p.id, f.id) },
       { label: "New folder", icon: <FolderPlus size={15} />, onSelect: () => startNewFolder(p.id, f.id) },
-      { label: "Import markdown…", icon: <Upload size={15} />, onSelect: () => startImport(p.id, f.id) },
+      { label: "Import files or .zip…", icon: <Upload size={15} />, onSelect: () => startImport(p.id, f.id) },
+      { label: "Import folder…", icon: <FolderUp size={15} />, onSelect: () => startFolderImport(p.id, f.id) },
       { divider: true },
       {
         label: "Rename",
@@ -1429,10 +1541,11 @@ export function AppSidebar({ authMode }: { authMode: string }) {
     if (isFileDrag(e.dataTransfer)) {
       e.preventDefault();
       e.stopPropagation();
-      const files = Array.from(e.dataTransfer.files);
+      // Read the drop now: the browser empties it once this handler awaits.
+      const plan = planDrop(e.dataTransfer);
       const allowed = canWrite(p.role);
       endDrag(); // clears the highlight + drag ghost
-      if (allowed) await importFiles(files, p.id, folderId);
+      if (allowed && !isEmptyPlan(plan)) await importDrop(plan, p.id, folderId);
       return;
     }
     e.preventDefault();
@@ -1833,6 +1946,8 @@ export function AppSidebar({ authMode }: { authMode: string }) {
       )}
       // Clears the highlight when the cursor is over the sidebar but not a valid
       // drop target (targets call stopPropagation, so this only fires elsewhere).
+      // An OS file drop here (not on a workspace/folder) imports each dropped
+      // folder or .zip as a new workspace.
       onDragOver={(e) => {
         const file = isFileDrag(e.dataTransfer);
         if (!drag && !file) return;
@@ -1843,12 +1958,15 @@ export function AppSidebar({ authMode }: { authMode: string }) {
           setFileDragCount(fileCount(e.dataTransfer));
         }
         moveGhost(e.clientX, e.clientY);
-        if (dropTarget !== null) setDropTarget(null);
+        const target = file ? NEW_WORKSPACE : null;
+        if (dropTarget !== target) setDropTarget(target);
       }}
       onDrop={(e) => {
         e.preventDefault();
         e.stopPropagation();
+        const plan = isFileDrag(e.dataTransfer) ? planDrop(e.dataTransfer) : null;
         endDrag();
+        if (plan && !isEmptyPlan(plan)) void importAsWorkspaces(plan);
       }}
     >
       {/* Band 1 — aligns with the editor tab bar (h-9). On mobile it drops to
@@ -2110,10 +2228,16 @@ export function AppSidebar({ authMode }: { authMode: string }) {
               </span>
               <div className="min-w-0">
                 <div className="truncate font-semibold text-foreground">
-                  {fileDragCount} {fileDragCount === 1 ? "file" : "files"}
+                  {fileDragCount} {fileDragCount === 1 ? "item" : "items"}
                 </div>
                 <div className="truncate text-muted-foreground">
-                  {destName() ? <>Import to &ldquo;{destName()}&rdquo;</> : <>Drop on a folder…</>}
+                  {dropTarget === NEW_WORKSPACE ? (
+                    <>New workspace from folder or .zip</>
+                  ) : destName() ? (
+                    <>Import to &ldquo;{destName()}&rdquo;</>
+                  ) : (
+                    <>Drop on a folder…</>
+                  )}
                 </div>
               </div>
             </>
@@ -2124,10 +2248,21 @@ export function AppSidebar({ authMode }: { authMode: string }) {
       <input
         ref={fileInputRef}
         type="file"
-        accept=".md,.markdown,.txt,text/markdown,text/plain"
+        accept=".md,.markdown,.txt,text/markdown,text/plain,.zip,application/zip"
         multiple
         hidden
         onChange={onFilePicked}
+      />
+      {/* Folder picker: the browser returns every file under the chosen folder
+          with its relative path (webkitRelativePath). React doesn't type the
+          non-standard attribute, hence the spread. */}
+      <input
+        ref={folderInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={onFolderPicked}
+        {...{ webkitdirectory: "" }}
       />
 
       {menu && (

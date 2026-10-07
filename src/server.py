@@ -11,7 +11,9 @@ notes.embedding column to EMBEDDING_DIM (see db.reconcile_embedding_dim).
 from __future__ import annotations
 
 import io
+import json
 import logging
+import uuid
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,7 +25,7 @@ from mcp.types import Icon
 from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 
-from . import config, data, state, tasks
+from . import config, data, importer, state, tasks
 from .auth import build_mcp_auth, resolve_identity
 from .db import reconcile_embedding_dim_at_startup, run_migrations
 from .embeddings_provider import embed_query
@@ -268,6 +270,75 @@ async def api_export_folder(request: Request) -> Response:
         return JSONResponse({"error": "not found"}, status_code=404)
     tree = await data.get_export_tree(folder.project_id, folder.id)
     return _zip_response(tree["name"], tree["items"])
+
+
+async def _read_capped(request: Request, cap: int) -> bytes | None:
+    """The request body, or None once it exceeds `cap` bytes (stops reading)."""
+    declared = request.headers.get("content-length")
+    if declared and declared.isdigit() and int(declared) > cap:
+        return None
+    buf = bytearray()
+    async for chunk in request.stream():
+        buf.extend(chunk)
+        if len(buf) > cap:
+            return None
+    return bytes(buf)
+
+
+@mcp.custom_route("/api/projects/{project_id}/import", methods=["POST"])
+async def api_import_tree(request: Request) -> JSONResponse:
+    """Import a folder tree — the inverse of export. The body is a .zip
+    (application/zip) or, for a folder dropped in the browser, JSON
+    `{"items": [{"path", "body"}]}`. Directories become folders and .md/.txt
+    files notes, in one transaction. Query: `folder_id` = where to import
+    (default the workspace root); `name` = put it all in a new folder of that
+    name (default: straight into the target). Owner/editor only."""
+    user = await _current_user(request)
+    if user is None:
+        return JSONResponse({"error": "unauthenticated"}, status_code=401)
+    project_id = request.path_params["project_id"]
+    role = await data.get_membership_role(user.id, project_id)
+    if role is None:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    if role not in ("owner", "editor"):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+
+    name = (request.query_params.get("name") or "").strip()[:200] or None
+    folder_id = request.query_params.get("folder_id") or None
+    if folder_id is not None:
+        try:
+            uuid.UUID(folder_id)
+        except ValueError:
+            return JSONResponse({"error": "invalid folder"}, status_code=400)
+    raw = await _read_capped(request, importer.MAX_UPLOAD_BYTES)
+    if raw is None:
+        return JSONResponse(
+            {"error": "The import is too large (over 10 MB). Split it into smaller parts."},
+            status_code=413,
+        )
+    ctype = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    try:
+        if ctype == "application/json":
+            try:
+                payload = json.loads(raw or b"{}")
+            except ValueError:
+                return JSONResponse({"error": "invalid JSON"}, status_code=400)
+            items = payload.get("items") if isinstance(payload, dict) else None
+            tree = importer.parse_items(items)
+        else:  # application/zip, application/x-zip-compressed, octet-stream…
+            tree = importer.parse_zip(raw, root_name=name)
+    except importer.ImportRejected as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+    if not tree.notes and not tree.folders:
+        return JSONResponse(
+            {"error": "Nothing to import: no markdown (.md) or text (.txt) files found."},
+            status_code=400,
+        )
+
+    result = await data.import_tree(project_id, folder_id, name, tree, user.id)
+    if result is None:
+        return JSONResponse({"error": "invalid folder"}, status_code=400)
+    return JSONResponse(result, status_code=201)
 
 
 @mcp.custom_route("/api/search", methods=["GET"])

@@ -67,9 +67,12 @@ thinking. re:call gives it something reliable to think about.
   and flags likely misspellings.
 - Deletes go to a restorable trash, with optional scheduled purge.
 
-**Getting data out**
+**Getting data in and out**
 - Export a workspace or folder as a zip of plain markdown files that open in Obsidian or
   any editor.
+- Import the other way: drop a zip or a folder (an export, an Obsidian vault) on a
+  workspace or folder to rebuild its folders and notes there, or on the sidebar to make it
+  a new workspace. `[[wikilinks]]` keep resolving; non-text files are skipped.
 - Installs as an app on desktop and mobile (PWA).
 
 ## What re:call doesn't do
