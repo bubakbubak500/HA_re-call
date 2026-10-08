@@ -43,3 +43,12 @@ web/*.tsbuildinfo
 
 # ── Local planning notes (never pushed) ─────────────────────
 PLAN-*.md
+
+# HA re:call runtime state, credentials and local test artifacts
+data/
+.test-tmp/
+*.sqlite3*
+*.db*
+*.token
+.uv-cache/
+dist/

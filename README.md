@@ -1,298 +1,216 @@
-# re:call
+# HA re:call
 
-![re:call: your team's knowledge base is also your AI's memory](web/public/og-card.png)
+Lokální strukturovaná paměť pro Home Assistant, odvozená z
+[panuhen/recall](https://github.com/panuhen/recall), MIT.
+Samostatný repozitář zachovává původní historii; značka `upstream-base` označuje
+výchozí commit `4cb572e`. GitHub nepovoluje dvojtečku v názvu repozitáře,
+proto `HA_re-call`, zatímco název produktu je **HA re:call**.
 
-**Your team's knowledge base is also your AI's memory.**
+## Co funguje ve verzi 0.1
 
-re:call is a shared markdown knowledge base. People write notes and connect them with
-`[[wikilinks]]`. AI assistants such as Claude and Copilot read and write the same notes
-over MCP, signed in as the person using them, so an assistant sees exactly what that
-person is allowed to see.
+- Jeden Python proces, FastMCP, SQLite/WAL/FTS5. Bez PostgreSQL, webového frontendu,
+  SSO, týmových rolí a samostatného workeru v novém runtime.
+- Entity, stabilní externí identifikátory, aliasy, kategorie a volitelný Markdown popis.
+- Atomická fakta se zdrojem a intervalem platnosti; vztahy se zdrojem a atributy.
+- Konzervativní detekce konfliktů stejného predikátu v překrývajícím se intervalu.
+  Nový návrh je `pending`, dokud jej asistent výslovně nepřijme nebo nezamítne.
+- Historie každého zápisu a kontrola `expected_revision` proti souběžnému přepsání.
+- Obnovitelné mazání; smazání entity skryje i její fakta a vazby.
+- Hledání podle přesného ID/aliasu, českého fulltextu bez diakritiky a volitelných
+  embeddingů. `entity_context` rozvine aktuální fakta, vztahy a sousední entity.
+- Model2Vec buď přes OpenAI-kompatibilní HTTP endpoint, nebo přímo z existujících
+  lokálních vah. Žádné automatické stahování modelu ani volání LLM.
+- Bearer token, Streamable HTTP `/mcp` nebo SSE `/sse` (volba při spuštění).
+- Atomický a opakovatelný import HA registrů, bez živých stavů nebo ovládání HA.
 
-It stays small on purpose: one Postgres database, one embedding call when a note
-changes, and no language model running on the server. Your assistant already does the
-thinking. re:call gives it something reliable to think about.
+### Původní MCP nástroje
 
-## Why
+Původní re:call je **beze změn archivovaný v `upstream/`**, včetně všech nástrojů
+v `upstream/src/tools/`. V této etapě nejsou přepisovány ani slučovány do šesti
+navržených nástrojů. Nový SQLite server má vlastní entitové nástroje a původní
+Markdown/týmové nástroje **nenačítá**. Není tedy náhradou původního serveru se
+stejným API. Jejich případný převod na nový datový model zůstává samostatnou etapou.
+Archivovaný web a týmový backend se neinstalují do nového balíčku ani kontejneru.
 
-- **Every assistant remembers something different.** Your Claude knows what you told
-  it; your teammate's knows something else. A shared knowledge base gives them all the
-  same memory, with the same permissions as the people using them.
-- **Team knowledge lives in heads and chat threads.** Notes that link to each other
-  are easier to find, and easier to keep, than messages.
-- **Wikis rot quietly.** A wrong runbook looks as trustworthy as a right one. re:call
-  gives notes an owner and a review date, and shows each workspace what is overdue,
-  broken or abandoned.
+## Lokální spuštění
 
-## How it works
+Python 3.12+ a [uv](https://docs.astral.sh/uv/):
 
-1. **People write.** Markdown notes in shared workspaces, with links, tags and
-   frontmatter. Every note has an author and a revision history.
-2. **Assistants use the same notes.** About 40 MCP tools let an assistant search, read,
-   write, link and organize notes. It signs in through the user's browser (OAuth), so
-   there are no API keys or service accounts, and every change is recorded as that
-   user's.
-3. **re:call stays simple.** Search and link suggestions use keywords and embeddings;
-   unlinked mentions and workspace health are plain text matching and SQL. Anything that
-   needs reasoning, such as summarizing a workspace, drafting a note from a meeting or
-   reviewing stale runbooks, is left to the assistant you already pay for.
-
-## What's in it
-
-**Writing**
-- Markdown editor with live preview, `[[wikilinks]]`, tags and frontmatter properties,
-  plus a reading view.
-- Mermaid diagrams (flowchart, sequence, ER, gantt, mindmap and more) render in the
-  editor and the reading view.
-- Version history: browse, diff and restore earlier revisions.
-
-**Finding**
-- Search by meaning or by keyword from a command palette, with a snippet around the
-  match. Embeddings come from Azure OpenAI or any OpenAI-compatible server, including a
-  local Ollama.
-- Assistants also get `grep`: exact-text search that returns just the matching lines, for
-  names, error codes, paths and quotes.
-- Backlinks and a graph view show how notes connect across a workspace.
-- Unlinked mentions: notes that name another note without linking to it.
-
-**Sharing and access**
-- Workspaces with Viewer, Editor and Owner roles, invitations by email, and optional
-  org-wide read access.
-- Sign-in with Microsoft Entra ID (for M365 organizations) or Google.
-
-**Keeping it current**
-- Notes can name an `owner` and a `review_every` interval. The workspace page lists
-  overdue reviews, owners who have left, broken links, old drafts and orphans.
-- An optional guide note tells people and agents what types and tags a workspace uses,
-  and flags likely misspellings.
-- Deletes go to a restorable trash, with optional scheduled purge.
-
-**Getting data in and out**
-- Export a workspace or folder as a zip of plain markdown files that open in Obsidian or
-  any editor.
-- Import the other way: drop a zip or a folder (an export, an Obsidian vault) on a
-  workspace or folder to rebuild its folders and notes there, or on the sidebar to make it
-  a new workspace. `[[wikilinks]]` keep resolving; non-text files are skipped.
-- Installs as an app on desktop and mobile (PWA).
-
-## What re:call doesn't do
-
-It doesn't run an LLM on the server: no automatic tagging, no generated answers, no
-extraction pipeline. Those add cost, hide the reasoning and blur who is responsible for
-a fact. When a feature is proposed, the test is whether the user's assistant could do it
-with the tools re:call already has. If it could, re:call doesn't build it.
-
-## Stack
-
-- **Frontend:** Next.js 16 (App Router) + React 19 + shadcn/ui + Tailwind CSS v4, IBM Plex
-  type, CodeMirror editing, react-markdown reading, react-force-graph-2d graph, Mermaid diagrams
-- **Backend:** Python 3.12 + FastMCP — serves both REST `/api` and MCP `/mcp` from one app
-- **Database:** PostgreSQL 16 + pgvector
-- **Migrations:** Alembic · **Background jobs:** procrastinate
-- **Embeddings:** Azure OpenAI `text-embedding-3-large` @ 1536 dims by default, or any
-  OpenAI-compatible endpoint (OpenAI, Ollama, vLLM, HF TEI, LiteLLM)
-- **Auth:** MSAL / Entra ID (single-tenant) or Better Auth (Google). Local dev runs a stub
-  user via `AUTH_MODE=dev`.
-
-## Quick start (local, Docker)
-
-```bash
-cp .env.example .env      # already present for local dev
-docker compose up -d      # postgres + backend + worker + web
+```powershell
+uv sync --locked
+# Vytvoří lokální token v ignorovaném data/mcp.token a spustí server:
+./tools/run-local.ps1
 ```
 
-| Service | URL / port |
-|---|---|
-| Web UI | http://localhost:3000 |
-| Backend health | http://localhost:8004/health |
-| MCP endpoint | http://localhost:8004/mcp |
-| PostgreSQL | localhost:54324 (user/pass/db: `recall`) |
+Server naslouchá na `127.0.0.1:8004`, MCP endpoint je `/mcp` a veřejný healthcheck
+`/health` nevrací obsah paměti. Klient musí posílat
+`Authorization: Bearer <obsah data/mcp.token>`. Token nikdy nevkládejte do URL.
+`Ctrl+C` ukončí server; SQLite databáze zůstává v `data/memory.sqlite3`.
 
-Local dev defaults to `AUTH_MODE=dev` (stub user, open MCP), so nothing external is
-required to start. To exercise real SSO, MCP OAuth, and embeddings, set `AUTH_MODE=entra`
-and fill in the Entra and Azure OpenAI values in `.env`, or use `AUTH_MODE=betterauth`
-(below). Both modes also need `BFF_SHARED_SECRET` (`openssl rand -hex 32`): the backend
-trusts the web app's identity headers only alongside it. For embeddings without Azure,
-see [Embeddings](#embeddings).
+Ruční spuštění (PowerShell):
 
-### Auth modes
-
-`AUTH_MODE` picks one identity provider for the whole instance, web UI and MCP alike.
-
-| Mode | For | Web sign-in | MCP (`/mcp`) auth |
-|---|---|---|---|
-| `entra` | An M365 / Entra ID organization | Microsoft (MSAL, single-tenant) | FastMCP `AzureProvider` OAuth proxy against your Entra app, plus delegated Entra tokens (below) |
-| `betterauth` | Everyone else | Google, via [Better Auth](https://www.better-auth.com) in the web app | Better Auth is the OAuth 2.1 authorization server (dynamic client registration); the backend validates its access tokens |
-| `dev` | Local only | None: a fixed stub user | Open, stub user |
-
-Nothing Better Auth-related loads, or touches the database, unless
-`AUTH_MODE=betterauth`. In `betterauth` mode, "org-wide" workspaces (`org_access =
-viewer`) are visible to every signed-in user of the instance, since there is no tenant
-to scope them to.
-
-### Better Auth setup (`AUTH_MODE=betterauth`)
-
-It runs on two public hosts: the web app (for example `https://recall.example.com`), which
-is also the OAuth issuer, and the backend's MCP endpoint (for example
-`https://recall-mcp.example.com`). MCP clients connect to `https://recall-mcp.example.com/mcp`,
-get a `401` pointing at its protected-resource metadata, and from there find Better
-Auth on the web host to register and sign in.
-
-1. In [Google Cloud Console](https://console.cloud.google.com/apis/credentials), create
-   an OAuth client ID of type *Web application*. Add the authorized redirect URI
-   `{BETTER_AUTH_URL}/api/auth/callback/google`, e.g.
-   `https://recall.example.com/api/auth/callback/google` (or
-   `http://localhost:3000/api/auth/callback/google` locally).
-2. Set in `.env` (see the Better Auth block in `.env.example`):
-   - `AUTH_MODE=betterauth`
-   - `BETTER_AUTH_URL`: the public web origin, no trailing slash. Better Auth uses it
-     verbatim as the issuer, and the backend advertises it byte for byte.
-   - `BETTER_AUTH_SECRET`: `openssl rand -base64 32`. The web app refuses to start on
-     an `https` origin with this empty or left at the dev placeholder.
-   - `BFF_SHARED_SECRET`: `openssl rand -hex 32`, the same value for the web app and
-     the backend. The backend trusts the web app's identity headers only with it, and
-     refuses every REST call while it is unset.
-   - `BETTER_AUTH_INTERNAL_URL`: where the backend reaches the web app to validate
-     tokens (`http://web:3000` in compose; defaults to `BETTER_AUTH_URL`).
-   - `MCP_PUBLIC_URL`: the MCP host, and add that host to `MCP_ALLOWED_HOSTS`.
-   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` from step 1.
-   - `BETTER_AUTH_ACCESS`: `open` (default) lets any Google account in; `closed`
-     admits only `BETTER_AUTH_ALLOWED_EMAILS`, a comma-separated list of addresses or
-     `@domain` suffixes. The list is checked at sign-up, at every sign-in, on every web
-     request and (in the backend) on every MCP token, so removing an address and
-     restarting both services locks that person out within a minute; their notes and
-     memberships stay. `closed` with an empty list refuses to start. A refused sign-in
-     lands back on `/sign-in` with an "invite-only" message. Set both variables on the
-     web app and the backend. `BETTER_AUTH_SIGNUP` is the old name: the app still reads it, but
-     `docker-compose.prod.yml` passes only `BETTER_AUTH_ACCESS`.
-3. The web app needs `DATABASE_URL` too. At startup it creates its own `ba_*` tables
-   (`ba_user`, `ba_session`, `ba_oauth_application`, …) in recall's database, and exits
-   if that fails.
-
-A signed-in user's recall identity is their Better Auth user id, with Google's email
-and name. The people picker searches recall's own users instead of a directory.
-
-### Embeddings
-
-The worker embeds each note in the background; search embeds the query inline and falls
-back to keyword-only if that fails. `EMBEDDING_PROVIDER` picks the API:
-
-| Provider | Calls | Settings |
-|---|---|---|
-| `azure` (default) | An Azure OpenAI embeddings deployment | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_EMBEDDING_ENDPOINT` (full deployment URL), `AZURE_OPENAI_EMBEDDING_MODEL` |
-| `openai` | `POST {EMBEDDING_BASE_URL}/embeddings` on OpenAI or any compatible server (Ollama's `/v1`, vLLM, HF TEI, LiteLLM) | `EMBEDDING_BASE_URL` (default `https://api.openai.com/v1`), `EMBEDDING_API_KEY` (optional; sent as `Authorization: Bearer` only when set), `EMBEDDING_MODEL` (default `text-embedding-3-large`) |
-
-`EMBEDDING_DIM` (default 1536, falling back to `AZURE_OPENAI_EMBEDDING_DIM`) must match
-the model's output and be between 1 and 2000, pgvector's HNSW limit; the backend refuses
-to start otherwise. Azure always sends it as the `dimensions` request parameter. For
-`openai`, `EMBEDDING_SEND_DIMENSIONS=auto` (default) sends it only to OpenAI's
-`text-embedding-3*` models, since self-hosted models often reject it; `true` or `false`
-override that.
-
-A self-hosted setup on the compose network, with Ollama serving `bge-m3` (1024 dims,
-multilingual including Finnish; `nomic-embed-text` is 768 dims and English-focused):
-
-```bash
-EMBEDDING_PROVIDER=openai
-EMBEDDING_BASE_URL=http://ollama:11434/v1
-EMBEDDING_MODEL=bge-m3
-EMBEDDING_DIM=1024
+```powershell
+$env:HA_RECALL_TOKEN = python -c "import secrets; print(secrets.token_urlsafe(32))"
+uv run --locked ha-recall
 ```
 
-Changing the model or the dimension re-embeds every note. The model and dimension are
-part of each note's content hash, and when `EMBEDDING_DIM` differs from the
-`notes.embedding` column, the backend retypes the column on startup (clearing all
-vectors and rebuilding the HNSW index) before the backfill re-queues every note. Until
-the worker catches up, a note without a vector is found only by keyword. Restart the backend and the worker together
-so both use the new settings.
+Na Linuxu odpovídá `export HA_RECALL_TOKEN="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"`.
+`.env` se načítá pomocí `uv run --env-file .env ha-recall` nebo automaticky v Docker Compose.
+Samotný modul Pythonu `.env` nenačítá.
 
-### MCP client config
+## Model2Vec a vyhledávání
 
-```json
-{ "mcpServers": { "recall": { "type": "http", "url": "http://localhost:8004/mcp" } } }
+Bez konfigurace jsou dostupné přesné a fulltextové dotazy; odpověď uvádí
+`semantic: disabled`. Při poruše embeddingového serveru vrátí `unavailable` a
+zachová fulltextové výsledky. Dostupnost se netají za falešnou sémantikou.
+
+Pro existující HTTP službu nastavte úplnou URL endpointu:
+
+```powershell
+$env:HA_RECALL_EMBEDDING_URL = 'http://127.0.0.1:8090/v1/embeddings'
+$env:HA_RECALL_EMBEDDING_MODEL = 'model2vec'
 ```
 
-Tool results for notes and workspaces include a `url` on the web app (for
-example `https://recall.example.com/notes/<id>`), so an assistant can hand people
-a link. The backend builds it from `APP_URL`, falling back to `BETTER_AUTH_URL`;
-with neither set, `url` is null. A link grants no access by itself.
+Požadavek: `{"model":"model2vec","input":["text"]}`.
+Odpověď: `{"data":[{"index":0,"embedding":[0.1,0.2]}]}`.
+Endpoint přijímá texty pouze z právě použité kolekce. Zadáním externí URL
+odesíláte texty této službě; pro domácí paměť používejte vlastní lokální službu.
 
-### Workspace guide & health
+Pro přímé načtení **již staženého** modelu:
 
-Everything here is ordinary flat frontmatter, so it stays editable in recall's
-Properties panel, Obsidian, or any text editor, and exports unchanged.
-
-A note can say who owns it and how often it should be checked:
-
-```yaml
----
-type: runbook
-owner: someone@example.com
-review_every: 6mo        # 30d, 2w, 6mo, 1y
-reviewed: 2026-09-25     # set by "Mark as reviewed"
----
+```powershell
+uv sync --locked --extra local-model
+$env:HA_RECALL_MODEL_PATH = 'C:/cesta/k/modelu'
+./tools/run-local.ps1
 ```
 
-When `review_every` has passed since `reviewed` (or since the note was created), the
-note shows a "Mark as reviewed" line, and the workspace page lists it as overdue.
+Adresář musí obsahovat `config.json`, `tokenizer.json` a `model.safetensors`.
+Použití HTTP a lokálního modelu současně je odmítnuto. Změna modelu zneplatní
+cache. Embeddingy se dopočítávají v procesu při hledání, nejvýše 32 záznamů na
+dotaz; nástroj `reindex_memory` zpracuje větší import po dávkách. Vektory jsou
+v SQLite a podobnost se pro malé domácí kolekce počítá lineárně v paměti.
 
-A workspace can also have one **guide**: a note with `type: guide`. "Add a guide" on
-the workspace page creates it, pre-filled with the types and tags already in use. Its
-body is prose for people and agents ("runbooks have an owner and `review_every: 6mo`"),
-and MCP `list_tree` returns it. Its frontmatter lists the workspace's types and tags:
+V tomto HA projektu Model2Vec běží uvnitř `jarvis_semantic`; samostatný HTTP
+embeddingový endpoint není potvrzený. Jeho zpřístupnění musí předcházet přímému
+napojení z doplňku. Lokální varianta je ověřitelná skriptem:
 
-```yaml
----
-type: guide
-owner: someone@example.com
-workspace_types: [runbook, decision, note]
-workspace_tags: [infra, auth, search]
----
+```powershell
+uv run --extra local-model python tools/local_model_check.py 'C:/cesta/k/modelu'
 ```
 
-Properties then suggests those types and tags, and a note gets a soft hint for a close
-misspelling ("`infrastructure` isn't a tag here. Did you mean `infra`?"). Nothing
-blocks a save. A guide with a formatting problem switches its hints off and says why
-on the workspace page; no guide means no hints.
+## Příklad práce s pamětí
 
-The workspace page's **Health** section (hidden when empty) lists overdue reviews,
-owners who have left, broken links, old drafts, notes not edited in 6 months, and
-orphans. MCP exposes the same data as `workspace_health`, plus `mark_reviewed`, so a
-scheduled agent can do the review work. An example routine prompt:
+1. `create_entity(namespace="home", entity={"name":"EGLO žárovka", "entity_type":"device", "external_id":"light.eglo_living_room"})`.
+2. Vytvořte oblast `Obývák` a propojte její vrácené UUID přes `add_relation`
+   s `predicate="located_in"`, `subject_id`, `object_id`, `source="user"`.
+3. `add_fact` uloží např. `predicate="pairing_issue"`, `value="Vyřešeno resetem"`,
+   `entity_id` a `source="user"`. Nezávislá pozorování mají `exclusive=false`.
+4. Jiná hodnota stejné vlastnosti vytvoří návrh. `resolve_fact` s `accept=true`
+   a aktuální revizí nahradí překrývající se přijaté hodnoty; staré zůstanou v historii.
+5. `search_memory` najde entitu či fakt. `entity_context` nad oblastí ukáže
+   zařízení v místnosti; nad zařízením jeho aktuální fakta.
 
-> Call `workspace_health` for the Infra workspace. For each overdue runbook, check its steps against
-> the repo and the running services. If it's still right, call `mark_reviewed`. If not,
-> tell me what's out of date and propose the fix; don't edit it yourself.
+Další nástroje: `ping`, `list_namespaces`, `update_entity`, `get_record`,
+`list_records`, `list_history`, `forget_record`, `restore_record`,
+`reindex_memory`, `export_memory`.
 
-### MCP callers in `AUTH_MODE=entra`
+Konflikty jsou určovány podle entity a predikátu, ne jazykovým modelem.
+Rozpory mezi různými názvy predikátů musí rozpoznat volající asistent.
+Přijetí návrhu zneplatní celý překrývající se starý fakt; nerozděluje jej na časové
+úseky. Platnost se uplatňuje v hledání a kontextu. `list_records` je administrativní
+pohled a zahrnuje i přijaté fakty mimo aktuální interval platnosti.
 
-Two kinds of caller can reach `/mcp`, and both act **as a signed-in user** — re:call
-applies that user's workspace roles and records them as the author. There is no
-service-account or API-key path.
+## Kolekce, token a historie
 
-| Caller | How it authenticates | Setup |
-|---|---|---|
-| Desktop / IDE assistants (Claude Desktop, Cursor, VS Code, …) | Standard MCP OAuth: the client discovers the server's metadata and the user signs in through a browser consent screen. FastMCP's `AzureProvider` proxies the flow against your Entra app. | Nothing beyond the Entra values in `.env`. |
-| A backend that already holds the user's identity (an agent platform, a chat host, an automation server) | Presents a **delegated Entra access token** for this API directly as `Authorization: Bearer …`. The backend obtains it with the [On-Behalf-Of flow](https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow), exchanging the user's own token for one audienced to `api://<your-client-id>`. Validated against the tenant's JWKS; requires the app's `access` scope (or whatever `MCP_SCOPES` lists) in `scp`. | In Entra, the calling app needs the delegated permission `api://<your-client-id>/access` on this app, admin-consented. If the backend and re:call share one app registration, the backend's own user token already satisfies the verifier and no exchange is needed. |
+Výchozí kolekce jsou `home,technical`. `private` zpřístupněte jen explicitním
+nastavením `HA_RECALL_NAMESPACES`. Jeden serverový token má přístup ke všem
+vyjmenovaným kolekcím; nejde o víceuživatelské ACL. Pro oddělenou soukromou
+paměť použijte samostatnou instanci, databázi a token. Vztahy nesmí přecházet mezi
+kolekcemi. Server bez tokenu o délce alespoň 32 znaků odmítne nastartovat.
 
-Quick check of the second mode with a token you hold yourself:
+Každá změna má čas UTC, akci, revizi a autora (`local` pro sdílený token,
+`ha-registry:<instance>` pro import). Historie neidentifikuje jednotlivé osoby
+používající tentýž token. `restore_record` vytváří novou revizi, historii nemaže.
+Obnova entity automaticky neobnovuje její smazané potomky; obnovte je jednotlivě.
+Obnova konfliktního faktu znovu vyžaduje přijetí návrhu.
 
-```bash
-TOKEN=$(az account get-access-token --resource api://<your-client-id> --query accessToken -o tsv)
-curl -sS https://<your-recall-host>/mcp \
-  -H "Authorization: Bearer $TOKEN" -H "Accept: application/json, text/event-stream" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"curl","version":"0"}}}'
+## Import referencí z HA
+
+Import je explicitní administrátorský příkaz, ne nástroj dostupný LLM:
+
+```powershell
+# Token HA předat prostředím, nikdy argumentem v příkazové řádce.
+$env:HA_RECALL_HA_TOKEN = '<HA long-lived token>'
+uv run --locked ha-recall-import --instance byt --ha-url http://homeassistant.local:8123
+# Alternativa: dříve získaný snapshot tří registrů:
+uv run --locked ha-recall-import --instance byt --snapshot registries.json
 ```
 
-A `200` with a server description means the token was accepted as you. Tokens minted for
-another audience, without the scope, or app-only (client-credentials) tokens are rejected.
+Snapshot má pole `areas`, `devices`, `entities` ve formátu HA registry API.
+`--instance` musí být stabilní. Registry UUID přežijí přejmenování `entity_id`;
+aktuální i původní HA ID jsou aliasy. Ruční popisy a kategorie zůstávají zachované.
+Přesun zařízení opraví importované vazby, ruční vztahy zachová. Znovu se neobnoví
+záznamy, které uživatel smazal. Reference chybějící v novém snapshotu zůstávají
+v paměti; import nepředpokládá, že nepřítomnost znamená trvalé odstranění.
+Všechny změny snapshotu se zapisují v jedné transakci.
 
-## Deployment
+Síťový klient používá jen `config/area_registry/list`, `config/device_registry/list`
+a `config/entity_registry/list`. Nepoužívá `get_states`, odběr událostí ani volání
+služeb. HA token se do databáze neukládá.
 
-Copy `infra/provision.example.sh` to `infra/provision.sh`, fill in its CONFIG block, and
-run it to provision the stack on **Azure Container Apps** (MCP backend,
-web BFF, worker, Postgres Flexible + pgvector, and Key Vault for secrets). CI/CD: copy
-[`azure-pipelines.example.yml`](azure-pipelines.example.yml) to `azure-pipelines.yml`; it rebuilds both images and rolls out the new
-tag on every push to `main`. See [`infra/README.md`](infra/README.md) for the full
-resource list, required secrets, and gotchas.
+## Jeden kontejner
+
+```sh
+cp .env.example .env
+# Vyplňte náhodný HA_RECALL_TOKEN.
+docker compose up --build -d
+```
+
+Výchozí port je publikovaný jen na loopback. Pro přístup ze sítě nastavte vlastní
+Compose override s konkrétní bind adresou; pro komunikaci přes nedůvěryhodnou síť
+přidejte TLS proxy. Data jsou v pojmenovaném volume `memory`. Kontejner běží pod
+UID 10001 a kořenový filesystem je pouze pro čtení. Modelové váhy nejsou v image.
+Volitelný build `--build-arg WITH_LOCAL_MODEL=1` přidá Model2Vec knihovnu; model
+pak připojte read-only a nastavte `HA_RECALL_MODEL_PATH`.
+
+## Budoucí instalace do Home Assistantu
+
+```sh
+uv run --locked python tools/package_addon.py
+```
+
+Výstup `dist/ha_recall-addon.zip` obsahuje lokální doplněk `ha_recall/`.
+Rozbalte jej do `/addons/`, obnovte seznam lokálních doplňků a sestavte HA re:call.
+V konfiguraci nastavte token. Doplněk má ruční spouštění, nemá ingress, přístup
+k Supervisor API ani implicitně publikovaný hostitelský port. Databáze je v `/data`
+a patří do zálohy doplňku. Embeddingy doplněk odebírá z volitelné HTTP služby.
+
+**SSE transport s bearer tokenem není automaticky OAuth integrace pro HA.**
+[Standardní HA MCP klient](https://www.home-assistant.io/integrations/mcp/)
+popisuje SSE a OAuth Client ID/Secret. Tato verze poskytuje lokální bearer token,
+nikoli OAuth server. Použijte klienta, který umí Authorization header (např.
+vlastní Jarvis MCP klient), nebo později doplňte autentizační adaptér. Neobcházejte
+to vypnutím autentizace nebo vložením tokenu do URL.
+Provoz v HA ani přímé připojení jeho standardní MCP integrace zatím není ověřené.
+
+## Testy, záloha a stav migrace
+
+```sh
+uv sync --locked
+uv run --locked pytest
+uv run --locked ruff check ha_recall tests_ha tools addon/run.py
+uv run --locked python tools/backup.py --database data/memory.sqlite3 --output backup.sqlite3
+```
+
+Zálohování používá SQLite backup API a zahrne i potvrzené zápisy ve WAL.
+Pro obnovu zastavte server a obnovte databázi ze zálohy do prázdného datového
+adresáře. Nekopírujte jen hlavní `.sqlite3` soubor během běhu; může chybět WAL.
+`export_memory` poskytuje čitelný JSON včetně historie; není náhradou DB restore.
+
+CI kontroluje lint, testy, oba transporty, balení lokálního doplňku a sestavení
+obou Docker image. Reálný Model2Vec test je volitelný a model v CI nestahuje.
+
+Připravený je samostatný lokální základ pro novou paměť. Před produkčním HA
+nasazením zbývá ověřit add-on na cílovém zařízení, autentizaci jeho MCP klienta
+a přístup k existujícím Model2Vec embeddingům. Automatická migrace dat z původního
+PostgreSQL a převod původních MCP nástrojů součástí této etapy nejsou.

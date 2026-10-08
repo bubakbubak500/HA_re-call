@@ -1,86 +1,28 @@
-name: recall
-
+name: ha-recall
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-recall}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-recall}
-      POSTGRES_DB: ${POSTGRES_DB:-recall}
-    ports:
-      - "54324:5432"
-    volumes:
-      - recall_pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-recall} -d ${POSTGRES_DB:-recall}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-
-  backend:
+  memory:
     build:
       context: .
-      dockerfile: Dockerfile
-    env_file: .env
+      args:
+        WITH_LOCAL_MODEL: ${WITH_LOCAL_MODEL:-0}
+    restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-recall}:${POSTGRES_PASSWORD:-recall}@postgres:5432/${POSTGRES_DB:-recall}
-      PYTHONPATH: /app
-      # AUTH_MODE=betterauth: the backend validates MCP tokens against the web
-      # app over the compose network, not via the public BETTER_AUTH_URL.
-      BETTER_AUTH_INTERNAL_URL: http://web:3000
-    command: ["watchfiles", "python -m src.server", "src"]
+      HA_RECALL_TOKEN: ${HA_RECALL_TOKEN:?Set a random token of at least 32 characters}
+      HA_RECALL_TRANSPORT: ${HA_RECALL_TRANSPORT:-http}
+      HA_RECALL_NAMESPACES: ${HA_RECALL_NAMESPACES:-home,technical}
+      HA_RECALL_EMBEDDING_URL: ${HA_RECALL_EMBEDDING_URL:-}
+      HA_RECALL_EMBEDDING_MODEL: ${HA_RECALL_EMBEDDING_MODEL:-model2vec}
+      HA_RECALL_EMBEDDING_KEY: ${HA_RECALL_EMBEDDING_KEY:-}
     ports:
-      - "8004:8765"
+      - "127.0.0.1:8004:8004"
     volumes:
-      - ./src:/app/src
-      - ./migrations:/app/migrations
-      - ./alembic.ini:/app/alembic.ini
-      # Mounted so the test suite can be run/iterated in the running container.
-      # The prod image installs only the runtime lock, so install the test deps
-      # once before running pytest:
-      #   docker compose exec backend pip install -r requirements-dev.txt
-      #   docker compose exec backend python -m pytest tests
-      # CI installs requirements-dev.txt itself (see azure-pipelines.example.yml).
-      - ./tests:/app/tests
-      - ./pytest.ini:/app/pytest.ini
-      - ./requirements-dev.txt:/app/requirements-dev.txt
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  worker:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER:-recall}:${POSTGRES_PASSWORD:-recall}@postgres:5432/${POSTGRES_DB:-recall}
-      PYTHONPATH: /app
-    command: ["sh", "-c", "procrastinate --app=src.tasks.procrastinate_app schema --apply || true && procrastinate --app=src.tasks.procrastinate_app worker"]
-    volumes:
-      - ./src:/app/src
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  web:
-    build:
-      context: ./web
-      dockerfile: Dockerfile.dev
-    env_file: .env
-    environment:
-      BACKEND_URL: http://backend:8765
-      # Dev uses Webpack (`next dev --webpack`) because Turbopack's file watcher
-      # doesn't detect changes across the Windows→Docker bind mount. Webpack
-      # honors polling, which does work over the mount.
-      WATCHPACK_POLLING: "true"
-    ports:
-      - "3000:3000"
-    volumes:
-      - ./web:/app
-      - /app/node_modules
-    depends_on:
-      - backend
-
+      - memory:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 volumes:
-  recall_pgdata:
+  memory:

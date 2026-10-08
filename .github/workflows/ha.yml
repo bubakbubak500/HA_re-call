@@ -1,0 +1,27 @@
+name: HA memory
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.1"
+          python-version: "3.12"
+      - run: uv sync --locked
+      - run: uv run --locked ruff check ha_recall tests_ha tools addon/run.py
+      - run: uv run --locked ruff format --check ha_recall tests_ha tools addon/run.py
+      - run: uv run --locked pytest
+      - run: uv run --locked python tools/package_addon.py
+      - run: docker build -t ha-recall:test .
+      - run: uv run --locked python tools/docker_smoke.py --image ha-recall:test
+      - run: unzip dist/ha_recall-addon.zip -d dist/addon
+      - run: docker build -t ha-recall-addon:test dist/addon/ha_recall
+      - run: uv run --locked python tools/docker_smoke.py --image ha-recall-addon:test --addon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ha-recall-local-addon
+          path: dist/ha_recall-addon.zip
