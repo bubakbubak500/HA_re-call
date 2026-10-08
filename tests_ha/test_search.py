@@ -61,3 +61,49 @@ def test_stale_vector_rejected_and_model_change_invalidates(store):
     store.update_entity("home", entity["id"], Entity(name="new"), 1)
     assert not store.save_vector(entity, "model-a", [1, 0])
     assert store.vectors("home", "model-a") == []
+
+
+async def test_remote_model_rotation_reindexes_before_returning_results(store):
+    import json
+
+    entity = store.create_entity("home", Entity(name="lamp"))
+    model = "first"
+
+    def handler(request):
+        texts = json.loads(request.content)["input"]
+        return httpx.Response(
+            200,
+            json={
+                "model": model,
+                "data": [
+                    {"index": i, "embedding": [1, 0] if model == "first" else [0, 1]}
+                    for i in range(len(texts))
+                ],
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider = Embeddings("http://test", client=client)
+        search = Search(store, provider)
+        assert (await search.search("home", "lighting"))["results"][0]["id"] == entity["id"]
+        original_key = provider.cache_key
+        model = "second"
+        assert (await search.search("home", "lighting"))["results"][0]["id"] == entity["id"]
+        assert provider.cache_key != original_key
+        assert store.vectors("home", original_key) == []
+
+
+async def test_concurrent_deletion_does_not_return_stale_lexical_hit(store):
+    entity = store.create_entity("home", Entity(name="lamp"))
+
+    class DeletingProvider:
+        url = "fake"
+        cache_key = "test"
+
+        async def encode(self, texts):
+            if store.get("home", entity["id"], True)["status"] == "active":
+                store.forget("home", entity["id"], 1)
+            return [[1, 0] for _ in texts]
+
+    result = await Search(store, DeletingProvider()).search("home", "lamp")
+    assert result["results"] == []

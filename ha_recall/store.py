@@ -30,6 +30,8 @@ class Store:
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.authorizer = None
+        self.entity_changed = None
         self.db = sqlite3.connect(path, check_same_thread=False, timeout=10)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys=ON")
@@ -72,6 +74,8 @@ class Store:
             yield
 
     def _get(self, namespace, record_id, include_inactive=False):
+        if self.authorizer:
+            self.authorizer(namespace, include_deleted=include_inactive)
         row = self.db.execute(
             "SELECT * FROM records WHERE namespace=? AND id=?", (namespace, record_id)
         ).fetchone()
@@ -103,6 +107,7 @@ class Store:
             "entity": ("name", "external_id", "aliases", "categories", "description"),
             "fact": ("predicate", "value"),
             "relation": ("predicate", "attributes"),
+            "folder": ("name",),
         }
         return "\n".join(
             dump(data[k]) if isinstance(data.get(k), (list, dict)) else str(data[k])
@@ -111,6 +116,15 @@ class Store:
         )
 
     def _save(self, namespace, kind, data, actor, action, record=None, status="active"):
+        if self.authorizer:
+            self.authorizer(namespace, write=True, include_deleted=True)
+        if kind == "entity" and status == "active":
+            data = Entity.model_validate(data).model_dump(mode="json")
+            folder_id = (data.get("document") or {}).get("folder_id")
+            if folder_id:
+                folder = self._get(namespace, folder_id)
+                if folder["kind"] != "folder":
+                    raise MemoryError("invalid_folder")
         stamp = now()
         result = dict(
             id=record["id"] if record else str(uuid4()),
@@ -124,7 +138,7 @@ class Store:
         )
         self.db.execute(
             "INSERT INTO records VALUES (?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(id) DO UPDATE SET data=excluded.data,status=excluded.status,"
+            "ON CONFLICT(id) DO UPDATE SET namespace=excluded.namespace,data=excluded.data,status=excluded.status,"
             "revision=excluded.revision,updated_at=excluded.updated_at",
             (
                 result["id"],
@@ -143,11 +157,18 @@ class Store:
         )
         self.db.execute("DELETE FROM search_index WHERE id=?", (result["id"],))
         self.db.execute("DELETE FROM vectors WHERE record_id=?", (result["id"],))
-        if status == "active":
+        if status == "active" and kind != "folder":
             self.db.execute(
                 "INSERT INTO search_index VALUES (?,?,?)",
                 (result["id"], namespace, self.text(result)),
             )
+        if (
+            kind == "entity"
+            and self.entity_changed
+            and action in ("create", "update", "restore", "delete")
+        ):
+            self.entity_changed(namespace, record, result)
+            result = self._get(namespace, result["id"], True)
         return result
 
     def _entity(self, namespace, record_id):
@@ -172,7 +193,10 @@ class Store:
                 ).fetchone()
                 if row:
                     existing = self._get(namespace, row["id"], True)
-                    if existing["status"] == "active" and existing["data"] == data:
+                    if (
+                        existing["status"] == "active"
+                        and Entity.model_validate(existing["data"]).model_dump(mode="json") == data
+                    ):
                         return existing
                     raise MemoryError("identity_exists: use update_entity or restore_record")
             return self._save(namespace, "entity", data, actor, "create")
@@ -181,10 +205,11 @@ class Store:
         with self.transaction():
             record = self._entity(namespace, record_id)
             self._revision(record, expected_revision)
+            data = entity.model_dump(mode="json")
+            if "document" not in entity.model_fields_set:
+                data["document"] = record["data"].get("document")
             try:
-                return self._save(
-                    namespace, "entity", entity.model_dump(mode="json"), actor, "update", record
-                )
+                return self._save(namespace, "entity", data, actor, "update", record)
             except sqlite3.IntegrityError as exc:
                 raise MemoryError("identity_exists") from exc
 
@@ -265,6 +290,8 @@ class Store:
     def forget(self, namespace, record_id, expected_revision, actor="local"):
         with self.transaction():
             record = self._get(namespace, record_id, True)
+            if record["kind"] == "folder":
+                raise MemoryError("use_delete_folder: folder deletion must include descendants")
             self._revision(record, expected_revision)
             if record["status"] == "deleted":
                 return record
@@ -304,6 +331,8 @@ class Store:
     def restore(self, namespace, record_id, revision, expected_revision, actor="local"):
         with self.transaction():
             current = self._get(namespace, record_id, True)
+            if current["kind"] == "folder":
+                raise MemoryError("use_restore_folder: folder restoration must include descendants")
             self._revision(current, expected_revision)
             row = self.db.execute(
                 "SELECT snapshot FROM history WHERE record_id=? AND revision=?",
@@ -390,7 +419,7 @@ class Store:
         with self.lock:
             rows = self.db.execute(
                 "SELECT r.id FROM records r LEFT JOIN vectors v ON r.id=v.record_id "
-                "WHERE r.namespace=? AND r.status='active' "
+                "WHERE r.namespace=? AND r.status='active' AND r.kind!='folder' "
                 "AND (v.record_id IS NULL OR v.model!=? OR v.revision!=r.revision) LIMIT ?",
                 (namespace, model, limit),
             ).fetchall()
@@ -398,7 +427,12 @@ class Store:
 
     def save_vector(self, record, model, vector):
         with self.transaction():
-            current = self._get(record["namespace"], record["id"], True)
+            try:
+                current = self._get(record["namespace"], record["id"], True)
+            except MemoryError as exc:
+                if str(exc) == "record_not_found":
+                    return False
+                raise
             if current["revision"] != record["revision"] or current["status"] != "active":
                 return False
             self.db.execute(

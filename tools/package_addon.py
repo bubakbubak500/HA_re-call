@@ -24,5 +24,22 @@ def build(destination=None):
     return destination
 
 
+def build_integration(destination=None):
+    destination = destination or ROOT / "dist" / "ha_recall-integration.zip"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    component = ROOT / "custom_components" / "ha_recall"
+    files = [
+        *component.glob("*.py"),
+        *component.glob("*.json"),
+        *component.glob("translations/*.json"),
+    ]
+    with ZipFile(destination, "w", ZIP_DEFLATED) as archive:
+        for source in files:
+            archive.write(source, str(source.relative_to(ROOT)))
+        archive.write(ROOT / "LICENSE", "LICENSE")
+    return destination
+
+
 if __name__ == "__main__":
     print(build())
+    print(build_integration())

@@ -13,6 +13,11 @@ def now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class Document(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    folder_id: Annotated[str, Field(min_length=1, max_length=128)] | None = None
+
+
 class Entity(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: Annotated[str, Field(min_length=1, max_length=256)]
@@ -24,7 +29,8 @@ class Entity(BaseModel):
         default_factory=list, max_length=100
     )
     categories: list[str] = Field(default_factory=list, max_length=100)
-    description: str = Field(default="", max_length=24000)
+    description: str = Field(default="", max_length=200000)
+    document: Document | None = None
 
 
 class Evidence(BaseModel):

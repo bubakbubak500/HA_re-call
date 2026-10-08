@@ -12,8 +12,8 @@ jobs:
           version: "0.12.1"
           python-version: "3.12"
       - run: uv sync --locked
-      - run: uv run --locked ruff check ha_recall tests_ha tools addon/run.py
-      - run: uv run --locked ruff format --check ha_recall tests_ha tools addon/run.py
+      - run: uv run --locked ruff check ha_recall tests_ha tools addon/run.py custom_components tests_ha_runtime
+      - run: uv run --locked ruff format --check ha_recall tests_ha tools addon/run.py custom_components tests_ha_runtime
       - run: uv run --locked pytest
       - run: uv run --locked python tools/package_addon.py
       - run: docker build -t ha-recall:test .
@@ -21,7 +21,15 @@ jobs:
       - run: unzip dist/ha_recall-addon.zip -d dist/addon
       - run: docker build -t ha-recall-addon:test dist/addon/ha_recall
       - run: uv run --locked python tools/docker_smoke.py --image ha-recall-addon:test --addon
+      - run: docker tag ha-recall:test ha-recall:local
+      - run: docker build -f tests_ha_runtime/Dockerfile -t ha-recall-ha-test:local .
+      - run: uv run --locked python tools/ha_runtime_check.py --fixture-model
+      - run: uv run --locked python tools/ha_runtime_check.py --fixture-model --transport sse
       - uses: actions/upload-artifact@v4
         with:
-          name: ha-recall-local-addon
-          path: dist/ha_recall-addon.zip
+          name: ha-recall-1.0-packages
+          path: |
+            dist/ha_recall-addon.zip
+            dist/ha_recall-integration.zip
+            .test-tmp/recall-test-*/result.json
+          include-hidden-files: true

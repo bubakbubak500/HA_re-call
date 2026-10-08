@@ -1,7 +1,7 @@
 {
   "name": "HA re:call",
   "slug": "ha_recall",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Entity-first semantic memory with SQLite, history and MCP",
   "url": "https://github.com/bubakbubak500/HA_re-call",
   "arch": ["amd64", "aarch64"],
@@ -12,11 +12,17 @@
   "ports_description": {"8004/tcp": "Authenticated MCP HTTP or SSE endpoint"},
   "options": {
     "token": "",
-    "transport": "sse",
+    "transport": "http",
     "namespaces": "home,technical",
     "embedding_url": "",
     "embedding_model": "model2vec",
-    "embedding_key": ""
+    "embedding_key": "",
+    "ha_url": "",
+    "ha_token": "",
+    "ha_instance": "home",
+    "ha_namespace": "home",
+    "sync_interval": 300,
+    "identities": []
   },
   "schema": {
     "token": "password",
@@ -24,6 +30,12 @@
     "namespaces": "str",
     "embedding_url": "str?",
     "embedding_model": "str",
-    "embedding_key": "password?"
+    "embedding_key": "password?",
+    "ha_url": "str?",
+    "ha_token": "password?",
+    "ha_instance": "str",
+    "ha_namespace": "str",
+    "sync_interval": "int(60,86400)",
+    "identities": [{"id": "str", "upn": "str", "token": "password"}]
   }
 }

@@ -1,0 +1,12 @@
+{
+  "domain": "ha_recall",
+  "name": "HA re:call",
+  "version": "1.0.0",
+  "config_flow": true,
+  "dependencies": ["http", "llm", "mcp"],
+  "documentation": "https://github.com/bubakbubak500/HA_re-call",
+  "codeowners": [],
+  "requirements": [],
+  "iot_class": "local_polling",
+  "integration_type": "service"
+}

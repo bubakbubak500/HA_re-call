@@ -1,0 +1,23 @@
+{
+  "title": "HA re:call",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Připojit paměť domácnosti",
+        "description": "Zadejte adresu MCP serveru a jeho token. Povolení přístupu pro Assist zpřístupní všechny paměťové nástroje také Jarvisovi. Embeddingový most používá Model2Vec již načtený Jarvisem; další model nestahuje.",
+        "data": {"url": "Adresa MCP (/mcp nebo /sse)", "token": "Bearer token HA re:call", "expose_to_assist": "Povolit Assistovi a Jarvisovi čtení a změny paměti", "embedding_bridge": "Zpřístupnit existující Jarvis Model2Vec přes autentizované HA API"}
+      },
+      "reconfigure": {
+        "title": "Upravit připojení paměti",
+        "data": {"url": "Adresa MCP", "token": "Bearer token HA re:call", "expose_to_assist": "Povolit paměť Assistovi a Jarvisovi", "embedding_bridge": "Povolit embeddingový most Jarvis"}
+      },
+      "reauth_confirm": {
+        "title": "Obnovit připojení paměti",
+        "description": "Zadejte aktuální adresu serveru a token.",
+        "data": {"url": "Adresa MCP", "token": "Bearer token HA re:call", "expose_to_assist": "Povolit paměť Assistovi a Jarvisovi", "embedding_bridge": "Povolit embeddingový most Jarvis"}
+      }
+    },
+    "error": {"cannot_connect": "Připojení k HA re:call se nezdařilo.", "invalid_auth": "Token není platný; musí mít alespoň 32 znaků.", "invalid_url": "Použijte HTTP nebo HTTPS adresu bez přihlašovacích údajů a parametrů.", "wrong_server": "Server neposkytuje požadované nástroje HA re:call."},
+    "abort": {"already_configured": "HA re:call už je nastavený.", "reauth_successful": "Připojení bylo obnoveno.", "reconfigure_successful": "Nastavení bylo uloženo."}
+  }
+}

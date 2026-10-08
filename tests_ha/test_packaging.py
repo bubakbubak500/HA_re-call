@@ -6,7 +6,7 @@ import pytest
 from ha_recall.models import Entity
 from ha_recall.store import Store
 from tools.backup import backup
-from tools.package_addon import build
+from tools.package_addon import build, build_integration
 
 
 def test_addon_contains_only_required_sources(tmp_path):
@@ -44,3 +44,14 @@ def test_backup_live_wal_and_no_overwrite(tmp_path):
             restored.close()
     finally:
         store.close()
+
+
+def test_integration_package_and_translations(tmp_path):
+    with zipfile.ZipFile(build_integration(tmp_path / "integration.zip")) as bundle:
+        assert all(name.endswith((".py", ".json", "LICENSE")) for name in bundle.namelist())
+        manifest = json.loads(bundle.read("custom_components/ha_recall/manifest.json"))
+        assert manifest["requirements"] == []
+        assert manifest["version"] == "1.0.0"
+        english = json.loads(bundle.read("custom_components/ha_recall/strings.json"))
+        czech = json.loads(bundle.read("custom_components/ha_recall/translations/cs.json"))
+        assert english["config"]["step"].keys() == czech["config"]["step"].keys()

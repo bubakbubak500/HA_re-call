@@ -31,7 +31,8 @@ class Embeddings:
                 self.url, json={"model": self.model, "input": texts}, headers=headers
             )
             response.raise_for_status()
-            data = sorted(response.json()["data"], key=lambda row: row["index"])
+            payload = response.json()
+            data = sorted(payload["data"], key=lambda row: row["index"])
             if [row["index"] for row in data] != list(range(len(texts))):
                 raise ValueError("Invalid embedding batch indexes")
             vectors = []
@@ -48,6 +49,12 @@ class Embeddings:
                 vectors.append([v / length for v in vector])
             if len({len(v) for v in vectors}) > 1:
                 raise ValueError("Inconsistent embedding dimensions")
+            if resolved_model := payload.get("model"):
+                if not isinstance(resolved_model, str):
+                    raise ValueError("Invalid resolved model identity")
+                self.cache_key = hashlib.sha256(
+                    f"{self.url}|{self.model}|{resolved_model}".encode()
+                ).hexdigest()
             return vectors
 
         if self.client:
@@ -118,8 +125,11 @@ class Search:
         if self.embeddings.url:
             try:
                 # Bounded self-healing; explicit reindex handles larger imports.
-                await self.reindex(namespace, 32)
                 qvec = (await self.embeddings.encode([query]))[0]
+                query_model = self.embeddings.cache_key
+                await self.reindex(namespace, 32)
+                if self.embeddings.cache_key != query_model:
+                    raise ValueError("Embedding model changed during the search; retry")
                 for record, vector in self.store.vectors(namespace, self.embeddings.cache_key):
                     if len(vector) == len(qvec) and (
                         record["kind"] == "entity" or is_current(record["data"])
@@ -132,6 +142,8 @@ class Search:
             except (httpx.HTTPError, ValueError, KeyError, TypeError):
                 state = "unavailable"
         scores, records, reasons = {}, {}, {}
+        if self.store.authorizer:
+            self.store.authorizer(namespace)
         for label, ranked in (("fulltext", lexical), ("semantic", [r for _, r in semantic[:100]])):
             for rank, record in enumerate(ranked):
                 rid = record["id"]
@@ -143,6 +155,14 @@ class Search:
         results = []
         for rid in sorted(scores, key=lambda key: (-scores[key], key)):
             record = records[rid]
+            try:
+                current = self.store.get(namespace, rid)
+            except MemoryError as exc:
+                if str(exc) == "record_not_found":
+                    continue
+                raise
+            if current["revision"] != record["revision"]:
+                continue  # Do not return a stale hit after a concurrent edit.
             if entity_type:
                 data = record["data"]
                 ids = (

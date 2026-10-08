@@ -465,11 +465,12 @@ wheels = [
 
 [[package]]
 name = "ha-recall"
-version = "0.1.0"
+version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "httpx" },
+    { name = "pyyaml" },
     { name = "websockets" },
 ]
 
@@ -490,6 +491,7 @@ requires-dist = [
     { name = "fastmcp", specifier = "==3.4.8" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "model2vec", marker = "extra == 'local-model'", specifier = "==0.9.0" },
+    { name = "pyyaml", specifier = ">=6,<7" },
     { name = "websockets", specifier = ">=15,<17" },
 ]
 provides-extras = ["local-model"]

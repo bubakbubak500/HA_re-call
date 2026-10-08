@@ -1,0 +1,28 @@
+{
+  "title": "HA re:call",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect household memory",
+        "description": "Enter the local HA re:call MCP endpoint and its token. Enable Assist access to make all memory tools available to Assist and Jarvis. The embedding bridge shares the Model2Vec already loaded by Jarvis; it does not download another model.",
+        "data": {
+          "url": "MCP URL (/mcp or /sse)",
+          "token": "HA re:call bearer token",
+          "expose_to_assist": "Allow Assist and Jarvis to read and change memory",
+          "embedding_bridge": "Share the existing Jarvis Model2Vec through the authenticated HA API"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure memory",
+        "data": {"url": "MCP URL", "token": "HA re:call bearer token", "expose_to_assist": "Allow Assist and Jarvis memory access", "embedding_bridge": "Enable Jarvis embedding bridge"}
+      },
+      "reauth_confirm": {
+        "title": "Reconnect memory",
+        "description": "Enter the current endpoint and token.",
+        "data": {"url": "MCP URL", "token": "HA re:call bearer token", "expose_to_assist": "Allow Assist and Jarvis memory access", "embedding_bridge": "Enable Jarvis embedding bridge"}
+      }
+    },
+    "error": {"cannot_connect": "Cannot connect to HA re:call.", "invalid_auth": "The token is invalid; use at least 32 characters.", "invalid_url": "Use an HTTP or HTTPS URL without credentials or query parameters.", "wrong_server": "This endpoint does not provide the required HA re:call tools."},
+    "abort": {"already_configured": "HA re:call is already configured.", "reauth_successful": "Reconnection successful.", "reconfigure_successful": "Configuration updated."}
+  }
+}

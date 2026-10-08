@@ -38,10 +38,17 @@ async def run(image, addon=False):
         suffix = uuid4().hex[:12]
         name, volume = f"ha-recall-smoke-{suffix}", f"ha-recall-smoke-data-{suffix}"
         token = secrets.token_urlsafe(32)
+        viewer_token = secrets.token_urlsafe(32)
+        identities = [{"id": "viewer", "upn": "viewer@local", "token": viewer_token}]
         env = {**os.environ, "HA_RECALL_TOKEN": token, "HA_RECALL_TRANSPORT": transport}
         options = Path(".test-tmp") / f"options-{suffix}.json"
         options.parent.mkdir(parents=True, exist_ok=True)
-        options.write_text(json.dumps({"token": token, "transport": transport}), encoding="utf-8")
+        options.write_text(
+            json.dumps({"token": token, "transport": transport, "identities": identities}),
+            encoding="utf-8",
+        )
+        identities_file = options.with_name(f"identities-{suffix}.json")
+        identities_file.write_text(json.dumps(identities), encoding="utf-8")
         args = [
             "run",
             "-d",
@@ -65,7 +72,16 @@ async def run(image, addon=False):
                 f"type=bind,source={options.resolve()},target=/data/options.json,readonly",
             ]
         else:
-            args += ["-e", "HA_RECALL_TOKEN", "-e", "HA_RECALL_TRANSPORT"]
+            args += [
+                "-e",
+                "HA_RECALL_TOKEN",
+                "-e",
+                "HA_RECALL_TRANSPORT",
+                "-e",
+                "HA_RECALL_IDENTITIES_FILE=/run/identities.json",
+                "--mount",
+                f"type=bind,source={identities_file.resolve()},target=/run/identities.json,readonly",
+            ]
         try:
             docker(*args, image, env=env)
             address = docker("port", name, "8004/tcp").splitlines()[0]
@@ -82,6 +98,26 @@ async def run(image, addon=False):
                         {"namespace": "home", "entity": {"name": "Container persistence test"}},
                     )
                 ).data
+                await client.call_tool(
+                    "share_workspace",
+                    {"project_id": "home", "upn": "viewer@local", "role": "viewer"},
+                )
+            async with Client(cls(endpoint, auth=viewer_token), timeout=10) as viewer:
+                assert (await viewer.call_tool("read_note", {"note_id": record["id"]})).data[
+                    "title"
+                ] == "Container persistence test"
+                assert (
+                    await viewer.call_tool("create_note", {"project_id": "home", "title": "denied"})
+                ).data["error"] == "forbidden"
+                denied = await viewer.call_tool(
+                    "create_entity",
+                    {"namespace": "home", "entity": {"name": "denied"}},
+                    raise_on_error=False,
+                )
+                assert denied.is_error
+                assert (await viewer.call_tool("list_tree", {"project_id": "technical"})).data[
+                    "error"
+                ] == "not_found"
             docker("restart", name)
             # Docker Desktop may allocate a different ephemeral host port on restart.
             address = docker("port", name, "8004/tcp").splitlines()[0]
@@ -95,11 +131,19 @@ async def run(image, addon=False):
                     )
                 ).data
                 assert restored == record
-            print(f"PASS {image}: {transport}, auth, writable volume, restart persistence")
+                await client.call_tool("remove_member", {"project_id": "home", "user_id": "viewer"})
+            async with Client(cls(endpoint, auth=viewer_token), timeout=10) as viewer:
+                assert (await viewer.call_tool("read_note", {"note_id": record["id"]})).data[
+                    "error"
+                ] == "not_found"
+            print(
+                f"PASS {image}: {transport}, auth, identity grants/revocation, writable volume, restart persistence"
+            )
         finally:
             subprocess.run(["docker", "rm", "-f", name], capture_output=True)
             subprocess.run(["docker", "volume", "rm", volume], capture_output=True)
             options.unlink(missing_ok=True)
+            identities_file.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

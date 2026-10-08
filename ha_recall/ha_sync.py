@@ -3,13 +3,14 @@
 import argparse
 import asyncio
 import json
+import logging
 import os
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from websockets.asyncio.client import connect
 
-from .models import Entity, Relation
+from .models import Entity, Relation, now
 from .store import MemoryError, Store, dump
 
 
@@ -136,6 +137,7 @@ def import_snapshot(store, namespace, instance, snapshot: Snapshot):
             if old:
                 data["description"] = old["data"]["description"]
                 data["categories"] = old["data"]["categories"]
+                data["document"] = old["data"].get("document")
                 data["aliases"] = sorted(set(data["aliases"] + old["data"]["aliases"]))
             data = Entity.model_validate(data).model_dump(mode="json")
             if not old or data != old["data"]:
@@ -186,6 +188,40 @@ def import_snapshot(store, namespace, instance, snapshot: Snapshot):
         "skipped_deleted": skipped,
         "live_states_imported": 0,
     }
+
+
+class RegistrySync:
+    """A bounded periodic registry read in the server process, with visible status."""
+
+    def __init__(self, store, url, token, instance, namespace="home", interval=300):
+        self.store, self.url, self.token = store, url, token
+        self.instance, self.namespace, self.interval = instance, namespace, interval
+        self.status = {"state": "pending" if url else "disabled", "last_success": None}
+
+    async def once(self):
+        try:
+            snapshot = await fetch_snapshot(self.url, self.token)
+            result = import_snapshot(self.store, self.namespace, self.instance, snapshot)
+            self.status = {"state": "ready", "last_success": now(), **result}
+            return result
+        except Exception as exc:
+            self.status = {
+                "state": "unavailable",
+                "last_success": self.status.get("last_success"),
+                "error": type(exc).__name__,
+            }
+            logging.getLogger(__name__).warning(
+                "Registry synchronization unavailable (%s)", type(exc).__name__
+            )
+            raise
+
+    async def run(self):
+        while True:
+            try:
+                await self.once()
+            except Exception:
+                pass  # Status records the failure; retry on the next bounded interval.
+            await asyncio.sleep(self.interval)
 
 
 def main():
