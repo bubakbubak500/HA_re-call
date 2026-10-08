@@ -326,6 +326,11 @@ def _epoch(value) -> Optional[int]:
         return None
 
 
+# The scopes an MCP client asks Better Auth for: the same set the web origin
+# advertises, offline_access included so the client gets a refresh token.
+MCP_SCOPES = ("openid", "profile", "email", "offline_access")
+
+
 class BetterAuthProvider(RemoteAuthProvider):
     """RemoteAuthProvider whose protected-resource metadata keeps the issuer verbatim.
 
@@ -357,6 +362,10 @@ class BetterAuthProvider(RemoteAuthProvider):
             "authorization_servers": [self.issuer],
             "bearer_methods_supported": ["header"],
             "resource_name": self.resource_name,
+            # MCP clients (Claude Code among them) request the scopes listed
+            # here. Without offline_access Better Auth issues no refresh token,
+            # so the client is signed out when the 1 h access token expires.
+            "scopes_supported": list(MCP_SCOPES),
         }
 
         async def metadata(_request: Request) -> JSONResponse:

@@ -313,6 +313,8 @@ async def test_protected_resource_metadata_issuer_is_exact(monkeypatch):
         assert body["authorization_servers"] == [ISSUER]
         assert '"http://localhost:3000"' in meta.text
         assert body["resource"] == "http://localhost:8004/mcp"
+        # offline_access is advertised, so MCP clients ask for a refresh token.
+        assert "offline_access" in body["scopes_supported"]
 
         # The 401 points clients at exactly that metadata document.
         unauth = await c.post("/mcp", json={})
