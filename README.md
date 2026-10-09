@@ -1,199 +1,210 @@
 # HA re:call 1.0
 
-Lokální strukturovaná paměť pro Home Assistant a Jarvis. Jeden proces FastMCP,
-SQLite/WAL/FTS5, entity, atomická fakta, vztahy, historie a hybridní hledání.
-Bez webového frontendu, PostgreSQL, SSO a samostatného workeru.
+Local structured memory for Home Assistant and Jarvis. One FastMCP process with
+SQLite/WAL/FTS5, entities, atomic facts, relationships, revision history, and
+hybrid search. No web frontend, PostgreSQL, SSO, or separate worker.
 
-Samostatný repozitář vychází z [panuhen/recall](https://github.com/panuhen/recall),
-MIT. Zachovává původní Git historii; `upstream-base` označuje výchozí commit
-`4cb572e`. GitHub nepovoluje dvojtečku v názvu, proto repozitář `HA_re-call`
-a produkt **HA re:call**. Původní zdroje jsou nezměněné v `upstream/` a do runtime
-se neinstalují.
+This independent repository is based on [panuhen/recall](https://github.com/panuhen/recall)
+and retains its Git history and MIT license. The `upstream-base` tag marks the
+original commit `4cb572e`. GitHub repository names cannot contain a colon, so the
+repository is named `HA_re-call` and the product is **HA re:call**. Unmodified
+original sources are preserved in `upstream/` and are excluded from the runtime.
 
-## Funkce a kompatibilita
+## Features and compatibility
 
-Všech **40 původních MCP nástrojů včetně ping** zůstává aktivních, se stejnými
-názvy, argumenty a výchozími hodnotami. K nim přibylo 15 entitových nástrojů;
-server tedy nabízí **55 nástrojů**. Původní rozhraní nebylo zredukováno.
+All **40 original MCP tools, including ping**, remain available with their original
+names, arguments, and defaults. Fifteen entity tools bring the total to **55 tools**.
+The original interface has not been reduced.
 
-- Poznámka je Markdown popis entity ve stejné databázi. Zápisy přes `create_note`
-  i `create_entity` jsou navzájem viditelné. Wiki odkazy tvoří grafové vztahy.
-- Fungují složky, přesuny, kopie, verze, obnovení, koš, kontrola odkazů, tagy,
-  konvence a termíny kontroly poznámek. Přesun do jiné kolekce zachovává historii.
-- Workspace je kolekce. Původní sdílecí nástroje spravují lokální tokenové identity
-  a role owner/editor/viewer. Pozvánka čeká na lokální identitu se shodným UPN;
-  neposílá email a nepotřebuje týmovou službu. `org_access=viewer` znamená všechny
-  nakonfigurované tokenové identity této instance.
-- Webové URL v odpovědích jsou `null`. `preview_diagram` kontroluje strukturu
-  Mermaid a vrací text; bez frontendu nevykresluje obrázek.
-- Stabilní HA registry ID, aliasy, kategorie, fakta se zdrojem a časovou platností,
-  vztahy s atributy. Živé stavy a ovládání zařízení zůstávají v HA.
-- Přesné ID/aliasy, český fulltext bez diakritiky a Model2Vec. `entity_context`
-  rozvine aktuální fakta a sousedy nalezené entity.
-- Změny mají revizi, UTC čas, autora a historii. `expected_revision` chrání nové
-  rozhraní před souběžným přepsáním; původní `update_note` má `base_updated_at`.
-- Mazání je obnovitelné. Pouze výslovný `purge` trvale odstraní obsah i jeho verze.
+- A note is an entity's optional Markdown description in the same database.
+  `create_note` and `create_entity` can read each other's records. Wiki links
+  become graph relationships.
+- Folders, moves, copies, revisions, restoration, trash, link checks, tags,
+  conventions, and review schedules are supported. Moving a record between
+  collections preserves its history.
+- A workspace is a collection. Sharing tools manage local token identities with
+  owner/editor/viewer roles. Invitations wait for a matching local UPN; they do
+  not send email or require a team service. `org_access=viewer` grants read access
+  to every configured token identity on this instance.
+- Web URL fields are `null`. `preview_diagram` checks Mermaid structure and returns
+  text; it does not render an image without a frontend.
+- Stable HA registry identities, aliases, categories, sourced facts with validity
+  intervals, and relationships with attributes. Live states and device control
+  remain in Home Assistant.
+- Exact identity/alias matching, accent-insensitive full-text search, and Model2Vec.
+  `entity_context` expands an entity into current facts and neighboring entities.
+- Changes carry a revision, UTC timestamp, actor, and history. `expected_revision`
+  protects entity edits against concurrent overwrites; the original `update_note`
+  supports `base_updated_at`.
+- Deletion is reversible. Only an explicit `purge` permanently removes records
+  and their revisions.
 
-Konflikty se určují podle entity a predikátu v překrývajícím se časovém intervalu.
-Nová hodnota je `pending`, dokud ji `resolve_fact` nepřijme nebo nezamítne.
-Nezávislá pozorování používají `exclusive=false`. Rozpor formulovaný jinými
-predikáty musí rozpoznat volající LLM. Přijetí návrhu nahradí celý překrývající se
-fakt, nerozděluje jeho interval. `list_records` je administrativní pohled včetně
-faktů mimo aktuální platnost; hledání a kontext platnost respektují.
+Conflicts are detected for the same entity and predicate over overlapping validity
+intervals. New values remain `pending` until `resolve_fact` accepts or rejects them.
+Independent observations use `exclusive=false`. The calling LLM must recognize
+contradictions expressed with different predicates. Accepting a proposal supersedes
+the entire overlapping fact; it does not split its validity interval.
+`list_records` is an administrative view that includes facts outside their current
+validity interval. Search and context respect validity dates.
 
-## Spuštění zde na počítači
+## Run locally
 
-Python 3.12+ a uv:
+Requires Python 3.12+ and uv:
 
 ```powershell
 uv sync --locked
 ./tools/run-local.ps1
 ```
 
-Skript vytvoří náhodný token v ignorovaném `data/mcp.token`. Server běží na
-`127.0.0.1:8004/mcp`; klient posílá `Authorization: Bearer <token>`.
-`/health` vrací dostupnost databáze a stav synchronizace bez obsahu paměti.
-`Ctrl+C` server zastaví; data zůstávají v `data/memory.sqlite3`.
+The script generates a random token in the ignored `data/mcp.token` file. The server
+listens at `127.0.0.1:8004/mcp`; clients send `Authorization: Bearer <token>`.
+`/health` reports database availability and registry synchronization status without
+returning memory contents. Press `Ctrl+C` to stop; data remains in
+`data/memory.sqlite3`.
 
-Pro existující lokální Model2Vec:
+To use existing local Model2Vec weights:
 
 ```powershell
 uv sync --locked --extra local-model
-$env:HA_RECALL_MODEL_PATH = 'C:/cesta/k/existujicimu/modelu'
+$env:HA_RECALL_MODEL_PATH = 'C:/path/to/existing/model'
 ./tools/run-local.ps1
 ```
 
-Adresář obsahuje `config.json`, `tokenizer.json`, `model.safetensors`. Váhy se
-nestahují. Alternativou je `HA_RECALL_EMBEDDING_URL` s úplnou adresou
-OpenAI-kompatibilního embeddingového endpointu a `HA_RECALL_EMBEDDING_KEY`.
-Lokální model a HTTP endpoint nelze zapnout současně.
+The directory must contain `config.json`, `tokenizer.json`, and `model.safetensors`.
+Weights are never downloaded automatically. Alternatively, set
+`HA_RECALL_EMBEDDING_URL` to a complete OpenAI-compatible embedding endpoint and
+`HA_RECALL_EMBEDDING_KEY` to its token. A local model and an HTTP endpoint cannot
+be enabled simultaneously.
 
-Bez embeddingů je hledání přesné/fulltextové (`semantic: disabled`); při výpadku
-endpointu se zachová fulltext a vrátí `unavailable`. Změna modelové identity
-zneplatní cache. Při dotazu se dopočítá nejvýše 32 chybějících záznamů;
-`reindex_memory` umožňuje větší import zpracovat po dávkách. Vektory jsou v SQLite
-s lineárním výpočtem podobnosti pro domácí kolekce.
+Without embeddings, exact and full-text search remain available
+(`semantic: disabled`). An endpoint failure preserves full-text results and reports
+`unavailable`. A model identity change invalidates cached vectors. Each search
+indexes at most 32 missing records; `reindex_memory` processes larger imports in
+batches. Vectors are stored in SQLite and similarity is computed linearly for
+household-sized collections.
 
-## Lokální identity a soukromí
+## Local identities and privacy
 
-Hlavní `HA_RECALL_TOKEN` má alespoň 32 znaků a identitu `local`. Výchozí kolekce
-`home,technical` vlastní tato identita. `HA_RECALL_NAMESPACES=home,technical,private`
-přidá další osobní kolekci. Další tokeny nemají k těmto kolekcím přístup, dokud jim
-jej vlastník nepřidělí pomocí `share_workspace`.
+The primary `HA_RECALL_TOKEN` must contain at least 32 characters and represents
+identity `local`. This identity owns the default `home,technical` collections.
+`HA_RECALL_NAMESPACES=home,technical,private` adds another personal collection.
+Other tokens cannot access these collections until their owner grants access with
+`share_workspace`.
 
-Ve standalone režimu nastavte `HA_RECALL_IDENTITIES_FILE` na neveřejný JSON:
+In standalone mode, set `HA_RECALL_IDENTITIES_FILE` to a private JSON file:
 
 ```json
-[{"id":"jarvis","upn":"jarvis@local","token":"SEM_PATRI_NAHODNY_TOKEN_ALESPON_32_ZNAKU"}]
+[{"id":"jarvis","upn":"jarvis@local","token":"REPLACE_WITH_A_RANDOM_TOKEN_OF_AT_LEAST_32_CHARACTERS"}]
 ```
 
-ID i UPN jsou stabilní; měňte token, ne identitu. Po úpravě souboru restartujte
-server. V doplňku totéž nastavuje pole `identities`. Sdílený token nerozlišuje
-jednotlivé lidské mluvčí. Jarvis používá oprávnění tokenu nastaveného v integraci;
-pro hlasový přístup sdílejte jen zamýšlené kolekce. Text se posílá pouze na
-embeddingový endpoint, který sami nakonfigurujete.
+Keep IDs and UPNs stable; rotate the token rather than changing the identity.
+Restart after editing the file. The add-on exposes the same setting as `identities`.
+A shared token does not distinguish individual speakers. Jarvis uses the permissions
+of the token configured in the integration; share only the intended collections
+with a voice assistant. Text is sent only to the embedding endpoint you configure.
 
-## Instalace připravených balíčků do HA
+## Install in Home Assistant
 
-Tato instalace není automatickou součástí vývoje. Vyžaduje **HA Core 2026.10.0
-nebo kompatibilní novější verzi**, HA OS/Supervised pro doplněk a existující
-`jarvis_semantic` pro sdílení jeho Model2Vec. Bez Jarvis modelu lze používat
-fulltext nebo jiný embeddingový endpoint.
+Requires **HA Core 2026.10.0 or a compatible newer version**, HA OS/Supervised for
+the add-on, and an existing `jarvis_semantic` installation to share its Model2Vec.
+Without the Jarvis model, use full-text search or a different embedding endpoint.
 
-Balíčky vytvoří:
+Build the installation packages:
 
 ```sh
 uv run --locked python tools/package_addon.py
 ```
 
-1. Rozbalte `dist/ha_recall-addon.zip` do `/addons/`, aby vzniklo
-   `/addons/ha_recall/config.json`. Obnovte seznam lokálních doplňků a sestavte
-   HA re:call. Nastavte náhodný `token`, transport `http` a doplněk spusťte.
-2. Rozbalte `dist/ha_recall-integration.zip` do HA `/config/`, aby vzniklo
-   `/config/custom_components/ha_recall/manifest.json`. Restartujte HA Core.
-3. V Nastavení → Zařízení a služby → Přidat integraci vyberte **HA re:call**.
-   Zadejte interní adresu doplňku `http://local-ha-recall:8004/mcp` a stejný token.
-   Pokud instalace používá jiný hostname, použijte hostname z informací doplňku.
-   Pro transport `sse` zadejte `/sse`.
-4. Zapněte přístup pro Assist/Jarvis podle zamýšlených oprávnění. Integrace
-   přidá všech 55 nástrojů s prefixem `ha_recall_` do Assist API a nabízí také
-   samostatné LLM API **HA re:call**. Jarvis/Luna používající Assist je tak uvidí
-   bez změny svého zdrojového kódu. Výchozí přístup pro Assist je vypnutý.
-5. Pro sdílení již načteného Model2Vec ponechte zapnutý embeddingový most.
-   V doplňku nastavte `embedding_url` na
-   `http://<adresa-HA>:8123/api/ha_recall/embeddings` a `embedding_key` na
-   dlouhodobý HA token. Jde o **HA token**, nikoli MCP token z kroku 1.
-6. Pro automatické registry nastavte `ha_url` na `http://<adresa-HA>:8123`,
-   `ha_token` na HA token uživatele oprávněného číst registry, `ha_instance`
-   na stabilní označení domácnosti, `ha_namespace` na `home` a `sync_interval`
-   např. 300 sekund. Po změně konfigurace restartujte doplněk.
+1. Extract `dist/ha_recall-addon.zip` into `/addons/`, producing
+   `/addons/ha_recall/config.json`. Refresh local add-ons, build HA re:call,
+   configure a random `token`, select transport `http`, and start it.
+2. Extract `dist/ha_recall-integration.zip` into HA's `/config/`, producing
+   `/config/custom_components/ha_recall/manifest.json`. Restart HA Core.
+3. Open Settings → Devices & services → Add integration → **HA re:call**.
+   Enter the add-on's internal URL, `http://local-ha-recall:8004/mcp`, and the
+   same token. If the hostname differs, use the one shown in the add-on's
+   information. For the `sse` transport, use `/sse`.
+4. Enable Assist/Jarvis access if desired. The integration contributes all 55 tools
+   with the `ha_recall_` prefix to the Assist API and also registers a separate
+   **HA re:call** LLM API. Jarvis/Luna clients using Assist can discover these tools.
+   Assist access is disabled by default.
+5. To share the already loaded Model2Vec, enable the embedding bridge. Set the
+   add-on's `embedding_url` to
+   `http://<HA-address>:8123/api/ha_recall/embeddings` and `embedding_key` to a
+   long-lived **Home Assistant token**, not the MCP token from step 1.
+6. For automatic registry synchronization, set `ha_url` to
+   `http://<HA-address>:8123`, `ha_token` to an HA token authorized to read registries,
+   `ha_instance` to a stable household identifier, `ha_namespace` to `home`, and
+   `sync_interval` to a value such as 300 seconds. Restart the add-on after changes.
 
-Most volá přímo již načtený `DecisionLayer.model.encode`, bez intentového
-předzpracování a bez druhé kopie vah. Endpoint vyžaduje HA autentizaci a omezuje
-velikost i souběh požadavků. Při chybě modelu vrací 503; paměť dál poskytuje
-fulltext. Připojení k MCP využívá HTTP/SSE klienta přímo z HA Core, s bearer tokenem.
-Není potřeba OAuth ani vypínání autentizace.
+The bridge calls the loaded `DecisionLayer.model.encode` directly, without intent
+preprocessing or loading a second copy of the weights. It requires HA authentication
+and bounds request size and concurrency. Model failures return HTTP 503 while memory
+continues serving full-text results. The integration uses HA Core's HTTP/SSE MCP
+client with a bearer token. No OAuth server or authentication bypass is required.
 
-Doplněk nemá webový ingress ani přístup k Supervisor API. Data jsou v `/data`
-a patří do zálohy doplňku. Ve výchozím stavu nepublikuje port mimo interní síť HA.
-Při vývoji se žádná integrace ani doplněk do běžícího domácího HA nekopíruje.
+The add-on has no web ingress or Supervisor API access. Its `/data` directory belongs
+in add-on backups. By default, its port is not published outside HA's internal network.
 
-## HA registry a stabilní identita
+## Registry synchronization and stable identity
 
-Periodická synchronizace běží ve stejném procesu. Používá jen WebSocket příkazy
-`config/area_registry/list`, `config/device_registry/list`,
-`config/entity_registry/list`, nikdy `get_states` ani volání služeb.
-`/health.registry_sync` ukazuje `ready`, `unavailable`, `pending` nebo `disabled`
-a čas posledního úspěchu. Chyba nezastaví paměť; další interval zopakuje pokus.
+Periodic synchronization runs in the server process. It uses only the WebSocket
+commands `config/area_registry/list`, `config/device_registry/list`, and
+`config/entity_registry/list`, never `get_states` or service calls.
+`/health.registry_sync` reports `ready`, `unavailable`, `pending`, or `disabled`,
+plus the last successful synchronization time. Failures do not stop memory;
+synchronization retries at the next interval.
 
-Registry UUID přežijí přejmenování `entity_id`; aktuální i původní HA ID zůstávají
-aliasy. Ruční popisy a kategorie se zachovají. Import opraví vlastní vazby na
-místnosti, ruční vztahy nemění. Uživatelův koš neobnovuje. Reference chybějící
-v pozdějším snapshotu zachová, protože nepřítomnost nemusí znamenat odstranění.
-Snapshot se zapíše atomicky. Token HA není součástí paměťové databáze.
+Registry UUIDs survive `entity_id` renames; current and previous HA IDs remain
+aliases. User descriptions and categories are preserved. Import updates its own
+room relationships while preserving manual ones. It does not restore user-deleted
+records. References missing from a later snapshot are retained because absence
+need not mean permanent removal. Each snapshot is imported atomically. HA tokens
+are not stored in the memory database.
 
-Jednorázový import nebo offline snapshot:
+One-time import or offline snapshot import:
 
 ```powershell
 $env:HA_RECALL_HA_TOKEN = '<HA token>'
-uv run --locked ha-recall-import --instance byt --ha-url http://homeassistant.local:8123
-uv run --locked ha-recall-import --instance byt --snapshot registries.json
+uv run --locked ha-recall-import --instance house --ha-url http://homeassistant.local:8123
+uv run --locked ha-recall-import --instance house --snapshot registries.json
 ```
 
-Snapshot má pole `areas`, `devices`, `entities` ve formátu HA registry API.
-`--instance` neměňte mezi importy téže domácnosti.
+Snapshots contain `areas`, `devices`, and `entities` in HA registry API format.
+Keep `--instance` stable across imports for the same household.
 
-## Samostatný kontejner, záloha a aktualizace
+## Standalone container, backup, and upgrades
 
 ```sh
 cp .env.example .env
-# Vyplňte náhodný HA_RECALL_TOKEN a případné lokální endpointy.
+# Set a random HA_RECALL_TOKEN and any local endpoints.
 docker compose up --build -d
 ```
 
-Compose ve výchozím stavu publikuje port pouze na loopback; pro jiné zařízení
-nastavte vlastní bind adresu. Přes nedůvěryhodnou síť použijte TLS proxy.
-Kontejner běží jako UID 10001, s kořenovým filesystemem jen pro čtení a datovým
-volume `memory`. Volitelný build `WITH_LOCAL_MODEL=1` přidá knihovnu Model2Vec;
-váhy připojte samostatně read-only. Prostředí `.env` načítá Compose nebo
-`uv run --env-file .env ha-recall`, samotný Python modul nikoli.
+Compose binds to loopback by default; configure an explicit bind address for access
+from another device. Use a TLS proxy across untrusted networks. The container runs
+as UID 10001 with a read-only root filesystem and the `memory` data volume.
+An optional `WITH_LOCAL_MODEL=1` build includes Model2Vec; mount existing weights
+separately as read-only. Compose or `uv run --env-file .env ha-recall` loads `.env`;
+the Python module itself does not.
 
 ```sh
 uv run --locked python tools/backup.py --database data/memory.sqlite3 --output backup.sqlite3
 ```
 
-SQLite backup API zahrne potvrzené zápisy z WAL. Při obnově zastavte server
-a obnovte DB do prázdného datového adresáře. Nekopírujte pouze hlavní soubor DB
-během běhu. Záloha zahrnuje poznámky, entity, historii, koš i lokální oprávnění.
-Konfigurační tokeny zálohujte odděleně. `export_memory` je čitelný export záznamů
-a historie jedné kolekce, nikoli náhrada úplné DB zálohy.
+The SQLite backup API includes committed WAL writes. To restore, stop the server
+and restore the database into an empty data directory. Do not copy only the main
+database file while the server is running. Backups include notes, entities, history,
+trash, and local permissions. Back up configuration tokens separately.
+`export_memory` exports readable records and history for one collection; it does
+not replace a complete database backup.
 
-Databáze lokální verze 0.1 se otevírá přímo, bez ztráty záznamů; nové tabulky
-kompatibility se vytvoří automaticky. Před aktualizací vždy vytvořte zálohu.
-Import původní vzdálené PostgreSQL databáze není automatický ani potřebný pro
-novou prázdnou domácí instalaci.
+Local version 0.1 databases open directly without losing records; compatibility
+tables are created automatically. Back up before upgrading. Importing an original
+remote PostgreSQL database is not automatic and is unnecessary for a new household
+installation.
 
-## Ověření
+## Verification
 
 ```sh
 uv sync --locked
@@ -203,18 +214,19 @@ uv run --locked python tools/package_addon.py
 docker build -t ha-recall:local .
 uv run --locked python tools/docker_smoke.py --image ha-recall:local
 docker build -f tests_ha_runtime/Dockerfile -t ha-recall-ha-test:local .
-uv run --locked python tools/ha_runtime_check.py --model /cesta/k/existujicimu/modelu
-uv run --locked python tools/ha_runtime_check.py --model /cesta/k/existujicimu/modelu --transport sse
+uv run --locked python tools/ha_runtime_check.py --model /path/to/existing/model
+uv run --locked python tools/ha_runtime_check.py --model /path/to/existing/model --transport sse
 ```
 
-Test posledních dvou příkazů spustí dočasný HA Core 2026.10.0 a backend ve vlastní
-Docker síti. Ověřuje konfigurační průvodce, nesprávné tokeny, skutečné Assist API,
-55 nástrojů, české hledání přes sdílený Model2Vec, registry a odpojení integrace.
-Po testu odstraní své kontejnery, volume, síť a testovací token. Domácí HA
-nepoužívá. Volba `--fixture-model` v CI nahrazuje pouze váhy deterministickým
-modelem; ověřuje integraci a není testem sémantické kvality.
+The last two commands start a temporary HA Core 2026.10.0 and backend on an isolated
+Docker network. They verify configuration flows, incorrect tokens, the actual Assist
+API, all 55 tools, Czech semantic search through shared Model2Vec, registry imports,
+and integration unload. The test removes its own containers, volumes, network,
+and token afterward; it does not use your production HA. CI's `--fixture-model`
+option substitutes deterministic vectors for the weights. It verifies integration,
+not semantic quality.
 
-Regresní testy dále pokrývají konflikt faktů, časovou platnost, oddělení kolekcí,
-původní signatury, poznámky a entity ve stejném grafu, historie, koš, přesuny,
-modelovou cache, souběžné úpravy a zálohy. Kontejnerové testy ověřují oba
-transporty, přístupová práva a zachování dat po restartu.
+Regression tests also cover fact conflicts, temporal validity, collection isolation,
+original tool signatures, notes and entities sharing one graph, history, trash,
+moves, model caching, concurrent edits, and backups. Container tests cover both
+transports, permissions, and restart persistence.
