@@ -26,6 +26,9 @@ class RecallTool(llm.Tool):
         self.name = f"{DOMAIN}__{remote.name}"
         self.title = getattr(remote, "title", None)
         self.description = remote.description
+        # Preserve the MCP schema for consumers which accept JSON Schema directly.
+        # probatio's round-trip currently serializes integer coercion as string.
+        self.parameters_json_schema = remote.inputSchema
         self.parameters = probatio.from_openapi(remote.inputSchema)
         annotations = remote.annotations
         if hasattr(llm, "ToolAnnotations"):

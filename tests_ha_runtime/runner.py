@@ -130,6 +130,13 @@ async def run():
         )
         contributed = async_get_tools(hass, context, llm.LLM_API_ASSIST)
         assert len(contributed.tools) == 55
+        search_tool = next(
+            tool for tool in contributed.tools if tool.remote_name == "search_memory"
+        )
+        assert search_tool.parameters_json_schema["properties"]["limit"]["type"] == "integer"
+        assert (
+            search_tool.parameters({"namespace": "home", "query": "test", "limit": 5})["limit"] == 5
+        )
         api = await llm.async_get_api(hass, f"ha_recall-{entry.entry_id}", context)
         assist = await llm.async_get_api(hass, llm.LLM_API_ASSIST, context)
         assert len([tool for tool in assist.tools if tool.name.startswith("ha_recall_")]) == 55
