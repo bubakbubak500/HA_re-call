@@ -206,6 +206,10 @@ installation.
 
 ## Verification
 
+For the optional Jarvis client convention for dated tasks, revision-safe updates,
+and Node-RED daily briefings, see [Dated tasks and daily briefings](docs/jarvis-tasks.md).
+This uses the existing MCP entity tools; the memory server itself does not schedule jobs.
+
 ```sh
 uv sync --locked
 uv run --locked pytest
