@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import httpx
 from homeassistant import bootstrap, loader
 from homeassistant.auth.const import GROUP_ID_ADMIN
+from homeassistant.const import __version__ as HA_VERSION
 from homeassistant.core import Context, HomeAssistant
 from homeassistant.helpers import area_registry, device_registry, entity_registry, llm
 from model2vec import StaticModel
@@ -135,10 +136,11 @@ async def run():
 
         async def call(name, arguments):
             result = await api.async_call_tool(
-                llm.ToolInput(tool_name="ha_recall_" + name, tool_args=arguments)
+                llm.ToolInput(tool_name="ha_recall__" + name, tool_args=arguments)
             )
-            assert not result.error, result
-            return result.data
+            data = result.data if hasattr(result, "data") else result
+            assert not (result.error if hasattr(result, "error") else data.get("error")), result
+            return data
 
         note = await call(
             "create_note",
@@ -194,9 +196,9 @@ async def run():
         )
         assert rejected["status"] == "rejected"
         missing = await api.async_call_tool(
-            llm.ToolInput(tool_name="ha_recall_read_note", tool_args={"note_id": "missing"})
+            llm.ToolInput(tool_name="ha_recall__read_note", tool_args={"note_id": "missing"})
         )
-        assert missing.error
+        assert missing.error if hasattr(missing, "error") else missing.get("error")
         hass.data["jarvis_semantic"] = {}
         degraded = await call(
             "search_memory", {"namespace": "home", "query": "Závada párování lampy"}
@@ -233,7 +235,7 @@ async def run():
             json.dumps(
                 {
                     "status": "passed",
-                    "ha_version": "2026.10.0",
+                    "ha_version": HA_VERSION,
                     "tools": len(names),
                     "transport": url.rsplit("/", 1)[-1],
                     "real_model2vec": real_model,

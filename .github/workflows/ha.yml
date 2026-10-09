@@ -25,6 +25,8 @@ jobs:
       - run: docker build -f tests_ha_runtime/Dockerfile -t ha-recall-ha-test:local .
       - run: uv run --locked python tools/ha_runtime_check.py --fixture-model
       - run: uv run --locked python tools/ha_runtime_check.py --fixture-model --transport sse
+      - run: docker build -f tests_ha_runtime/Dockerfile --build-arg HA_VERSION=2026.9.4 -t ha-recall-ha-test:local .
+      - run: uv run --locked python tools/ha_runtime_check.py --fixture-model
       - uses: actions/upload-artifact@v4
         with:
           name: ha-recall-1.0-packages

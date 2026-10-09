@@ -23,21 +23,22 @@ class RecallTool(llm.Tool):
 
     def __init__(self, remote, coordinator):
         self.remote_name = remote.name
-        self.name = f"{DOMAIN}_{remote.name}"
-        self.title = remote.title
+        self.name = f"{DOMAIN}__{remote.name}"
+        self.title = getattr(remote, "title", None)
         self.description = remote.description
         self.parameters = probatio.from_openapi(remote.inputSchema)
         annotations = remote.annotations
-        self.annotations = llm.ToolAnnotations(
-            read_only=bool(annotations and annotations.readOnlyHint),
-            destructive=annotations.destructiveHint
-            if annotations and annotations.destructiveHint is not None
-            else True,
-            open_world=annotations.openWorldHint
-            if annotations and annotations.openWorldHint is not None
-            else True,
-            idempotent=bool(annotations and annotations.idempotentHint),
-        )
+        if hasattr(llm, "ToolAnnotations"):
+            self.annotations = llm.ToolAnnotations(
+                read_only=bool(annotations and annotations.readOnlyHint),
+                destructive=annotations.destructiveHint
+                if annotations and annotations.destructiveHint is not None
+                else True,
+                open_world=annotations.openWorldHint
+                if annotations and annotations.openWorldHint is not None
+                else True,
+                idempotent=bool(annotations and annotations.idempotentHint),
+            )
         self.coordinator = coordinator
 
     async def async_call(self, hass, tool_input, llm_context):
@@ -54,7 +55,10 @@ class RecallTool(llm.Tool):
                 data = {
                     "content": [entry.model_dump(exclude_none=True) for entry in result.content]
                 }
-            return llm.ToolResult(data=data, error=bool(result.isError or data.get("error")))
+            error = bool(result.isError or data.get("error"))
+            if hasattr(llm, "ToolResult"):
+                return llm.ToolResult(data=data, error=error)
+            return {**data, **({"error": data.get("error") or "mcp_tool_failed"} if error else {})}
         except (TimeoutError, httpx.HTTPError, ExceptionGroup, McpError) as exc:
             raise HomeAssistantError(
                 "HA re:call is unavailable; the operation may not have completed"

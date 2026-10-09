@@ -105,7 +105,7 @@ with a voice assistant. Text is sent only to the embedding endpoint you configur
 
 ## Install in Home Assistant
 
-Requires **HA Core 2026.10.0 or a compatible newer version**, HA OS/Supervised for
+Requires **HA Core 2026.9.4 or a compatible newer version**, HA OS/Supervised for
 the add-on, and an existing `jarvis_semantic` installation to share its Model2Vec.
 Without the Jarvis model, use full-text search or a different embedding endpoint.
 
@@ -125,7 +125,7 @@ uv run --locked python tools/package_addon.py
    same token. If the hostname differs, use the one shown in the add-on's
    information. For the `sse` transport, use `/sse`.
 4. Enable Assist/Jarvis access if desired. The integration contributes all 55 tools
-   with the `ha_recall_` prefix to the Assist API and also registers a separate
+   with the `ha_recall__` prefix to the Assist API and also registers a separate
    **HA re:call** LLM API. Jarvis/Luna clients using Assist can discover these tools.
    Assist access is disabled by default.
 5. To share the already loaded Model2Vec, enable the embedding bridge. Set the
